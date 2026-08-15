@@ -563,7 +563,8 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
           // auth.json + models.json at session-create time; refresh it before
           // calling setModel so providers, models, and credentials added after
           // session creation are visible without restarting the session.
-          await live.session.modelRuntime.reloadConfig();
+          // (`refresh()` also reloads models.json — it subsumed the old
+          // `reloadConfig()` in pi-ai 0.84.)
           await syncStoredApiKeyToRuntime(live.session.modelRuntime, req.body.provider);
           await live.session.modelRuntime.refresh();
           // Wrap in withTimeout so a hung SDK setModel can't hold the
