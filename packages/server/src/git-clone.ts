@@ -416,6 +416,12 @@ function gitCloneEnv(): Record<string, string> {
   return {
     ...env,
     ...(config.agentToolSandbox.enabled ? { HOME: config.agentToolSandbox.home } : {}),
+    // Pin the locale so git emits its C-locale progress lines
+    // ("Receiving objects: 45% ...") instead of translated text.
+    // parseProgressLine is English-only, so without this a
+    // non-C locale host would surface every progress frame as a
+    // generic `stderr` event and the UI would show no progress.
+    LC_ALL: "C",
     // Prevent git from prompting on stdin when credentials are
     // wrong / missing — without this, git can hang indefinitely
     // waiting for a username/password.
