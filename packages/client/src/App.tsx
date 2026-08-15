@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { FileCode, FolderTree, Menu, MessageSquare, Terminal as TerminalIcon } from "lucide-react";
 import { useIsMobile } from "./lib/use-is-mobile";
 import { useAuthStore } from "./store/auth-store";
@@ -22,7 +22,9 @@ import { ProcessesPanel } from "./components/ProcessesPanel";
 import { countRunning, selectProcesses, useProcessesStore } from "./store/processes-store";
 import { FileBrowserPanel } from "./components/FileBrowserPanel";
 import { EditorPanel } from "./components/EditorPanel";
-import { TerminalPanel } from "./components/TerminalPanel";
+const TerminalPanel = lazy(() =>
+  import("./components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })),
+);
 import { GlobalSearchBar } from "./components/GlobalSearchBar";
 import { McpStatusBadge } from "./components/McpStatusBadge";
 import { useMcpStore } from "./store/mcp-store";
@@ -921,7 +923,9 @@ export function App() {
               className="shrink-0 border-t border-neutral-800"
               style={{ height: `${terminalHeight}px` }}
             >
-              <TerminalPanel />
+              <Suspense fallback={null}>
+                <TerminalPanel />
+              </Suspense>
             </div>
           </>
         )}
