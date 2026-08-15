@@ -121,6 +121,10 @@ ARG PTOOLS_GID=1001
 #     hygiene. curl for fetching, ca-certificates so HTTPS works, less
 #     so `git log` and similar pagers don't bomb, procps so `ps`/`top`
 #     are present for users debugging long-running tool processes.
+#   - sudo: lets the `pi` user escalate to root from the integrated
+#     terminal / agent shell. NOPASSWD because container users have no
+#     password. Only relevant in legacy mode — sandbox mode keeps tool
+#     processes under the restricted pi-tools identity.
 #   - python3/pip3: Python 3.12 package tooling from the official
 #     Python image. `python` and `py` are aliases for `python3`.
 #
@@ -132,7 +136,7 @@ ARG PTOOLS_GID=1001
 # same layer, so the toolchain is never part of the image.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini gosu git ripgrep bash curl ca-certificates less procps \
+      tini gosu git ripgrep bash curl ca-certificates less procps sudo \
  && rm -rf /var/lib/apt/lists/* \
  && (userdel node 2>/dev/null || true) \
  && (groupdel node 2>/dev/null || true) \
@@ -140,7 +144,9 @@ RUN apt-get update \
  && useradd -m -u $PUID -g $PGID -s /bin/bash pi \
  && groupadd -g $PTOOLS_GID pi-tools \
  && useradd -m -d /home/pi-tools -u $PTOOLS_UID -g $PTOOLS_GID -s /usr/sbin/nologin pi-tools \
- && usermod -aG pi-tools pi
+ && usermod -aG pi-tools pi \
+ && echo 'pi ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/pi \
+ && chmod 0440 /etc/sudoers.d/pi
 
 WORKDIR /app
 
