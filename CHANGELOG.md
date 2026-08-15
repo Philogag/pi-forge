@@ -15,6 +15,23 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Config reload over REST and in the UI.** New `POST /api/v1/config/reload`
+  (reloads every live session — the pi TUI `/reload` equivalent, returning
+  `{ reloaded, failures }`) and `POST /api/v1/sessions/:id/reload` (reloads a
+  single live session, 404/409 when missing or external) endpoints. Settings >
+  General gains a Restart button and the chat toolbar a Reload button, both
+  with confirm/pending/inline-result handling. The reload does not re-read
+  `mcp.json` and does not restart the process.
+- **Settings extensions manager.** A new Extensions tab in Settings lists
+  configured packages with grouped tools/skills/prompts/themes resources,
+  installs and removes them via `POST`/`GET`/`DELETE /api/v1/config/extensions`
+  (source type inferred from `npm:`/`git:`/`local:` prefixes, 120s install
+  timeout, 404 `package_not_found` on removal), and expands each package's
+  resources inline. Global/Project install scope is selectable in the install
+  row.
+
 ## [1.4.8] — 2026-08-15
 
 ### Changed
