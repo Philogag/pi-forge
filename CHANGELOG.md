@@ -15,6 +15,30 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Release pipeline now ships the GHCR image only.** The release workflow no
+  longer publishes npm packages or creates GitHub Releases; pushing a `v*` tag
+  builds and pushes the multi-arch container image to GHCR.
+- **Smaller, faster cold-start Docker image.** The runtime image installs
+  production dependencies directly (`npm ci` in the final stage) instead of
+  copying the builder's node_modules, prunes cross-platform dead weight
+  (node-pty prebuilds, the musl canvas binding), and drops `gh`, `tea`, `vim`,
+  and `gnupg` from the base toolchain. The native-build toolchain (`make g++`)
+  is installed transiently and purged in the same layer.
+- **Faster initial page load.** The terminal panel is lazy-loaded (xterm is
+  split into its own chunk) and production builds no longer emit source maps.
+- **Pi SDK trio bumped to 0.84.2.** Updated `@earendil-works/pi-coding-agent`,
+  `pi-agent-core`, and `pi-ai` from 0.80.10. The SDK removed
+  `ModelRuntime#reloadConfig()`; the server now calls `refresh()`, which also
+  reloads `models.json`, preserving live provider/config-change behavior.
+
+### Fixed
+
+- **Clone progress no longer depends on the host locale.** The git clone child
+  process now pins `LC_ALL=C`, so progress lines ("Receiving objects: …")
+  parse deterministically and stream as `progress` events even on non-English
+  locales.
 ## [1.4.7] — 2026-07-22
 
 ### Added
