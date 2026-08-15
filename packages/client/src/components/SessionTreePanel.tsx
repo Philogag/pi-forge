@@ -541,7 +541,7 @@ function NavigateConfirmDialog({
             className={`rounded-md px-3 py-1 text-xs font-medium ${
               state?.isStreaming === true
                 ? "bg-amber-600 text-amber-50 hover:bg-amber-500 light:bg-amber-500 light:text-white light:hover:bg-amber-600"
-                : "bg-neutral-100 text-neutral-900 hover:bg-white"
+                : "bg-neutral-100 text-neutral-900 hover:bg-neutral-200"
             }`}
           >
             {state?.isStreaming === true ? "Abort & navigate" : "Navigate"}

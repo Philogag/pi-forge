@@ -34,6 +34,7 @@ import {
 } from "../mcp/manager.js";
 import { BUILTIN_TOOL_NAMES, reloadAllLiveSessions } from "../session-registry.js";
 import { discoverExtensionResources } from "../extensions-discovery.js";
+import { installPackage, listPackages, removePackage } from "../extensions-manager.js";
 import {
   getAllToolOverrides,
   getProjectToolState,
@@ -1875,6 +1876,175 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
         return { reloaded, failures };
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  /**
+   * List installed pi packages with their contributed resources
+   * (tools / skills / prompts / themes) and package.json metadata.
+   */
+  fastify.get(
+    "/config/extensions",
+    {
+      schema: {
+        tags: ["config"],
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              packages: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    source: { type: "string" },
+                    type: { type: "string", enum: ["npm", "git", "local"] },
+                    scope: { type: "string", enum: ["user", "project"] },
+                    installedPath: { type: "string" },
+                    name: { type: "string" },
+                    version: { type: "string" },
+                    description: { type: "string" },
+                    resources: {
+                      type: "object",
+                      properties: {
+                        tools: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: {
+                              name: { type: "string" },
+                              description: { type: "string" },
+                            },
+                          },
+                        },
+                        skills: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: { path: { type: "string" } },
+                          },
+                        },
+                        prompts: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: { path: { type: "string" } },
+                          },
+                        },
+                        themes: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: { path: { type: "string" } },
+                          },
+                        },
+                      },
+                    },
+                    errors: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: { path: { type: "string" }, error: { type: "string" } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (_req, reply) => {
+      try {
+        return await listPackages(config.workspacePath, config.piConfigDir);
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  /**
+   * Install a pi package (npm spec / git URL / local path) and persist
+   * it in `settings.json#packages[]`. Takes effect on NEW sessions;
+   * running sessions are restarted manually (Settings → General).
+   */
+  fastify.post(
+    "/config/extensions/install",
+    {
+      schema: {
+        tags: ["config"],
+        body: {
+          type: "object",
+          required: ["source", "scope"],
+          properties: {
+            source: { type: "string", minLength: 1 },
+            scope: { type: "string", enum: ["user", "project"] },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: { source: { type: "string" }, scope: { type: "string" } },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const { source, scope } = req.body as { source: string; scope: "user" | "project" };
+      try {
+        return await installPackage(config.workspacePath, config.piConfigDir, source, scope);
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  /**
+   * Uninstall a pi package and drop its `settings.json#packages[]`
+   * entry. Unknown sources → 404 `package_not_found`.
+   */
+  fastify.post(
+    "/config/extensions/remove",
+    {
+      schema: {
+        tags: ["config"],
+        body: {
+          type: "object",
+          required: ["source", "scope"],
+          properties: {
+            source: { type: "string", minLength: 1 },
+            scope: { type: "string", enum: ["user", "project"] },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: { removed: { type: "boolean" } },
+          },
+          404: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { source, scope } = req.body as { source: string; scope: "user" | "project" };
+      try {
+        const { removed } = await removePackage(
+          config.workspacePath,
+          config.piConfigDir,
+          source,
+          scope,
+        );
+        if (!removed) {
+          return reply.code(404).send({
+            error: "package_not_found",
+            message: `Package "${source}" is not installed.`,
+          });
+        }
+        return { removed: true };
       } catch (err) {
         return internalError(reply, err);
       }

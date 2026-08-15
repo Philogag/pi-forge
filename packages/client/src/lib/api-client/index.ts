@@ -1667,6 +1667,112 @@ function gitQuery(
   return qs.toString();
 }
 
+export interface ExtensionToolInfo {
+  name: string;
+  description?: string;
+}
+
+export interface PackageResourcePath {
+  path: string;
+}
+
+export interface PackageResources {
+  tools: ExtensionToolInfo[];
+  skills: PackageResourcePath[];
+  prompts: PackageResourcePath[];
+  themes: PackageResourcePath[];
+}
+
+export interface InstalledPackage {
+  source: string;
+  type: "npm" | "git" | "local";
+  scope: "user" | "project";
+  installedPath?: string;
+  name?: string;
+  version?: string;
+  description?: string;
+  resources: PackageResources;
+  errors?: { path: string; error: string }[];
+}
+
+export interface PackagesListing {
+  packages: InstalledPackage[];
+}
+
+function vExtensionToolInfo(value: unknown, status: number): ExtensionToolInfo {
+  if (!isObject(value) || typeof value.name !== "string") {
+    fail(status, "expected { name }");
+  }
+  return value as unknown as ExtensionToolInfo;
+}
+
+function vPackageResourcePath(value: unknown, status: number): PackageResourcePath {
+  if (!isObject(value) || typeof value.path !== "string") {
+    fail(status, "expected { path }");
+  }
+  return value as unknown as PackageResourcePath;
+}
+
+function vPackageResources(value: unknown, status: number): PackageResources {
+  if (
+    !isObject(value) ||
+    !Array.isArray(value.tools) ||
+    !Array.isArray(value.skills) ||
+    !Array.isArray(value.prompts) ||
+    !Array.isArray(value.themes)
+  ) {
+    fail(status, "expected { tools, skills, prompts, themes } arrays");
+  }
+  value.tools.forEach((t) => vExtensionToolInfo(t, status));
+  value.skills.forEach((s) => vPackageResourcePath(s, status));
+  value.prompts.forEach((p) => vPackageResourcePath(p, status));
+  value.themes.forEach((th) => vPackageResourcePath(th, status));
+  return value as unknown as PackageResources;
+}
+
+function vInstalledPackage(value: unknown, status: number): InstalledPackage {
+  if (
+    !isObject(value) ||
+    typeof value.source !== "string" ||
+    (value.type !== "npm" && value.type !== "git" && value.type !== "local") ||
+    (value.scope !== "user" && value.scope !== "project") ||
+    !isObject(value.resources)
+  ) {
+    fail(status, "expected { source, type, scope, resources }");
+  }
+  vPackageResources(value.resources, status);
+  return value as unknown as InstalledPackage;
+}
+
+function vPackagesListing(value: unknown, status: number): PackagesListing {
+  if (!isObject(value) || !Array.isArray(value.packages)) {
+    fail(status, "expected { packages: [] }");
+  }
+  value.packages.forEach((p) => vInstalledPackage(p, status));
+  return value as unknown as PackagesListing;
+}
+
+function vInstallExtensionResult(
+  value: unknown,
+  status: number,
+): { source: string; scope: "user" | "project" } {
+  if (
+    !isObject(value) ||
+    typeof value.source !== "string" ||
+    (value.scope !== "user" && value.scope !== "project")
+  ) {
+    fail(status, "expected { source, scope }");
+  }
+  return { source: value.source, scope: value.scope };
+}
+
+function vRemoveExtensionResult(value: unknown, status: number): { removed: boolean } {
+  if (!isObject(value) || typeof value.removed !== "boolean") {
+    fail(status, "expected { removed: boolean }");
+  }
+  return { removed: value.removed };
+}
+
 export const api = {
   authStatus: () => request("/api/v1/auth/status", vAuthStatus, { skipAuth: true }),
   login: (password: string, username?: string) =>
@@ -2086,6 +2192,23 @@ export const api = {
       },
       { method: "POST" },
     ),
+
+  // ---------------- extensions ----------------
+
+  /** List installed pi packages with contributed resources + metadata. */
+  getExtensions: () => request("/api/v1/config/extensions", vPackagesListing),
+  /** Install a package (npm spec / git URL / local path). Takes effect on new sessions. */
+  installExtension: (source: string, scope: "user" | "project") =>
+    request("/api/v1/config/extensions/install", vInstallExtensionResult, {
+      method: "POST",
+      body: { source, scope },
+    }),
+  /** Uninstall a package. 404 package_not_found when not installed. */
+  removeExtension: (source: string, scope: "user" | "project") =>
+    request("/api/v1/config/extensions/remove", vRemoveExtensionResult, {
+      method: "POST",
+      body: { source, scope },
+    }),
 
   // ---------------- mcp ----------------
   getMcpSettings: () => request("/api/v1/mcp/settings", vMcpSettings),

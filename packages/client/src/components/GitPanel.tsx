@@ -419,7 +419,7 @@ export function GitPanel() {
         <button
           onClick={() => void handleInit()}
           disabled={busy}
-          className="rounded-md bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-md bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
           title="Run `git init -b main` in the project root"
         >
           {busy ? "Initializing…" : "Initialize git repo"}
@@ -1303,7 +1303,7 @@ export function GitPanel() {
             <button
               type="submit"
               disabled={newRemoteName.trim().length === 0 || newRemoteUrl.trim().length === 0}
-              className="rounded-md bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-md bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Add
             </button>

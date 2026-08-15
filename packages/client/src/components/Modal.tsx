@@ -229,7 +229,7 @@ export function PromptDialog({
           <button
             type="submit"
             disabled={trimmed.length === 0}
-            className="rounded-md bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-md bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {primaryLabel}
           </button>
@@ -279,7 +279,7 @@ export function ConfirmDialog({
             className={
               tone === "danger"
                 ? "rounded-md bg-red-700 px-3 py-1 text-xs font-medium text-red-50 hover:bg-red-600"
-                : "rounded-md bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-white"
+                : "rounded-md bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-neutral-200"
             }
           >
             {primaryLabel}

@@ -8,6 +8,8 @@ import {
   type McpServerStatus,
   type McpTransport,
   type ProvidersListing,
+  type PackagesListing,
+  type InstalledPackage,
   type PromptSummary,
   type SkillDiagnostic,
   SERVER_THEME_COLOR_KEYS,
@@ -27,10 +29,12 @@ import { THEME_DEFS, useThemeStore, type ThemeId } from "../lib/theme";
 import { createClientId } from "../lib/client-id";
 import { getStoredToken } from "../lib/auth-client";
 import { WebhooksTab } from "./WebhooksTab";
+import { ConfirmDialog } from "./Modal";
 import { useAuthStore } from "../store/auth-store";
 
 type Tab =
   | "providers"
+  | "extensions"
   | "agent"
   | "mcp"
   | "tools"
@@ -103,6 +107,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           ] as const)
         : ([
             "providers",
+            "extensions",
             "agent",
             "mcp",
             "tools",
@@ -199,7 +204,9 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                                         ? "Appearance"
                                         : t === "backup"
                                           ? "Backup"
-                                          : "General"}
+                                          : t === "extensions"
+                                            ? "Extensions"
+                                            : "General"}
                 </button>
               ))}
             </div>
@@ -245,6 +252,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
 
         <div className="min-w-0 flex-1 overflow-y-auto px-4 py-3 text-sm text-neutral-200">
           {tab === "providers" && <ProvidersTab onError={setError} />}
+          {tab === "extensions" && <ExtensionsTab onError={setError} />}
           {tab === "agent" && <AgentTab onError={setError} />}
           {tab === "mcp" && <McpTab onError={setError} />}
           {tab === "tools" && <ToolsTab onError={setError} />}
@@ -265,6 +273,217 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
 
 function errorCode(err: unknown): string {
   return err instanceof ApiError ? err.code : (err as Error).message;
+}
+
+// ---------------- Extensions tab ----------------
+
+function ExtensionsTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const [listing, setListing] = useState<PackagesListing | undefined>(undefined);
+  const [source, setSource] = useState("");
+  const [scope, setScope] = useState<"user" | "project">("user");
+  const [installing, setInstalling] = useState(false);
+  const [removing, setRemoving] = useState<string | undefined>(undefined);
+  const [removeTarget, setRemoveTarget] = useState<InstalledPackage | undefined>(undefined);
+  const [flash, setFlash] = useState<{ ok: boolean; text: string } | undefined>(undefined);
+
+  const refresh = async (): Promise<void> => {
+    onError(undefined);
+    try {
+      setListing(await api.getExtensions());
+    } catch (err) {
+      onError(`Failed to load extensions: ${errorCode(err)}`);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const install = async (): Promise<void> => {
+    const trimmed = source.trim();
+    if (trimmed.length === 0 || installing) return;
+    setInstalling(true);
+    setFlash(undefined);
+    try {
+      await api.installExtension(trimmed, scope);
+      setSource("");
+      await refresh();
+      setFlash({
+        ok: true,
+        text: `Installed "${trimmed}" — takes effect on new sessions. Restart running sessions from General.`,
+      });
+    } catch (err) {
+      setFlash({ ok: false, text: `Install failed: ${errorCode(err)}` });
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const remove = async (p: InstalledPackage): Promise<void> => {
+    setRemoving(p.source);
+    try {
+      await api.removeExtension(p.source, p.scope);
+      await refresh();
+    } catch (err) {
+      onError(`Remove failed: ${errorCode(err)}`);
+    } finally {
+      setRemoving(undefined);
+    }
+  };
+
+  if (listing === undefined) {
+    return <p className="text-xs italic text-neutral-500">Loading extensions…</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-neutral-500">
+        Installed pi packages and the resources they contribute (tools / skills / prompts / themes).
+        New packages take effect on <em>new</em> sessions — restart running sessions from{" "}
+        <em>General</em>.
+      </p>
+
+      {/* Install row */}
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void install();
+          }}
+          placeholder="npm:package or git:owner/repo (e.g. npm:pi-subagents)"
+          className="flex-1 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 outline-none focus:border-neutral-500"
+        />
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value as "user" | "project")}
+          className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-300 outline-none"
+          title="Install scope"
+        >
+          <option value="user">Global</option>
+          <option value="project">Project</option>
+        </select>
+        <button
+          onClick={() => void install()}
+          disabled={installing || source.trim().length === 0}
+          className="rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-900 disabled:opacity-50"
+        >
+          {installing ? "Installing…" : "Install"}
+        </button>
+      </div>
+      {flash !== undefined && (
+        <p role="status" className={`text-xs ${flash.ok ? "text-emerald-400" : "text-red-400"}`}>
+          {flash.text}
+        </p>
+      )}
+
+      {listing.packages.length === 0 && (
+        <p className="text-xs italic text-neutral-500">No packages installed.</p>
+      )}
+
+      {listing.packages.map((p) => {
+        const res = p.resources;
+        const total = res.tools.length + res.skills.length + res.prompts.length + res.themes.length;
+        return (
+          <div
+            key={`${p.scope}:${p.source}`}
+            className="rounded border border-neutral-800 bg-neutral-900/40 p-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm text-neutral-100">{p.name ?? p.source}</span>
+                <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-500">
+                  {p.type}
+                </span>
+                <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-500">
+                  {p.scope === "user" ? "Global" : "Project"}
+                </span>
+                {p.version !== undefined && (
+                  <span className="text-[10px] text-neutral-500">v{p.version}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 text-xs">
+                <button
+                  onClick={() => setRemoveTarget(p)}
+                  disabled={removing === p.source}
+                  className="rounded border border-red-700/50 px-2 py-0.5 text-red-300 hover:bg-red-900/20 disabled:opacity-50"
+                >
+                  {removing === p.source ? "Removing…" : "Remove"}
+                </button>
+              </div>
+            </div>
+            <details className="mt-2">
+              <summary className="cursor-pointer text-[11px] text-neutral-500">
+                {total} contributed resource{total === 1 ? "" : "s"}
+              </summary>
+              <ul className="mt-1 space-y-1 text-[11px]">
+                {res.tools.length > 0 && (
+                  <li>
+                    <span className="font-semibold text-neutral-400">Tools</span>
+                    <ul className="ml-3 space-y-0.5 font-mono text-neutral-300">
+                      {res.tools.map((t) => (
+                        <li key={t.name}>
+                          {t.name}
+                          {t.description !== undefined && (
+                            <span className="ml-2 text-neutral-500">— {t.description}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                )}
+                {res.skills.length > 0 && (
+                  <li>
+                    <span className="font-semibold text-neutral-400">Skills</span>
+                    <ul className="ml-3 space-y-0.5 font-mono text-neutral-300">
+                      {res.skills.map((s) => (
+                        <li key={s.path}>{s.path}</li>
+                      ))}
+                    </ul>
+                  </li>
+                )}
+                {res.prompts.length > 0 && (
+                  <li>
+                    <span className="font-semibold text-neutral-400">Prompts</span>
+                    <ul className="ml-3 space-y-0.5 font-mono text-neutral-300">
+                      {res.prompts.map((pr) => (
+                        <li key={pr.path}>{pr.path}</li>
+                      ))}
+                    </ul>
+                  </li>
+                )}
+                {res.themes.length > 0 && (
+                  <li>
+                    <span className="font-semibold text-neutral-400">Themes</span>
+                    <ul className="ml-3 space-y-0.5 font-mono text-neutral-300">
+                      {res.themes.map((th) => (
+                        <li key={th.path}>{th.path}</li>
+                      ))}
+                    </ul>
+                  </li>
+                )}
+              </ul>
+            </details>
+          </div>
+        );
+      })}
+      <ConfirmDialog
+        open={removeTarget !== undefined}
+        onClose={() => setRemoveTarget(undefined)}
+        onConfirm={() => {
+          const target = removeTarget;
+          setRemoveTarget(undefined);
+          if (target !== undefined) void remove(target);
+        }}
+        title="Uninstall package"
+        message={`Uninstall "${removeTarget?.source}"? Its tools and resources stop loading in new sessions.`}
+        primaryLabel="Uninstall"
+        tone="danger"
+      />
+    </div>
+  );
 }
 
 // ---------------- Providers tab ----------------
@@ -2168,7 +2387,7 @@ function SystemPromptTab({ onError }: { onError: (msg: string | undefined) => vo
             type="button"
             onClick={() => void save()}
             disabled={busy || overBudget || !dirty}
-            className="rounded bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
+            className="rounded bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-neutral-200 disabled:opacity-50"
           >
             {busy ? "Saving…" : "Save"}
           </button>
@@ -2763,7 +2982,7 @@ function AppearanceTab() {
               <button
                 onClick={() => void saveServerTheme()}
                 disabled={serverThemeBusy}
-                className="rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
+                className="rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-200 disabled:opacity-50"
               >
                 Save custom colors
               </button>
@@ -4505,15 +4724,9 @@ function GeneralTab() {
  */
 function RestartButton() {
   const [pending, setPending] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | undefined>(undefined);
   const restart = async (): Promise<void> => {
-    if (
-      !window.confirm(
-        "Restart the agent runtime of every live session? In-flight agent runs will be interrupted.",
-      )
-    ) {
-      return;
-    }
     setPending(true);
     setMessage(undefined);
     try {
@@ -4543,12 +4756,23 @@ function RestartButton() {
     <div className="space-y-1.5">
       <button
         type="button"
-        onClick={() => void restart()}
+        onClick={() => setConfirmOpen(true)}
         disabled={pending}
         className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500 disabled:opacity-50"
       >
         {pending ? "Restarting…" : "Restart"}
       </button>
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void restart();
+        }}
+        title="Restart agent runtime"
+        message="Restart the agent runtime of every live session? In-flight agent runs will be interrupted."
+        primaryLabel="Restart"
+      />
       {message !== undefined && (
         <p role="status" className={`text-xs ${message.ok ? "text-emerald-400" : "text-red-400"}`}>
           {message.text}
@@ -4669,7 +4893,7 @@ function ChangePasswordSection() {
         <button
           type="submit"
           disabled={pending || current.length === 0 || next.length === 0}
-          className="rounded-md bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-md bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 transition hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending ? "Saving…" : "Update password"}
         </button>

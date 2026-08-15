@@ -1,0 +1,13 @@
+{
+  "name": "forge-ext-sample",
+  "version": "1.0.0",
+  "description": "Fixture package for extension manager integration tests",
+  "pi": {
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  }
+}

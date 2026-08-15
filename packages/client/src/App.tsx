@@ -653,7 +653,7 @@ export function App() {
                         <p>No projects yet.</p>
                         <button
                           onClick={() => setSetupPickerDismissed(false)}
-                          className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white"
+                          className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
                         >
                           + New project
                         </button>
@@ -701,7 +701,7 @@ export function App() {
                           // store's `error` field.
                           void useSessionStore.getState().createSession(active.id);
                         }}
-                        className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white"
+                        className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
                       >
                         + New session
                       </button>
