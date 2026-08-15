@@ -3,8 +3,9 @@
 # Multi-stage Dockerfile for pi-forge.
 #
 #   builder  → install deps, compile server TS, build Vite client
-#   runtime  → node:22-bookworm-slim with Python 3.12 + pip, compiled
-#              output, and hoisted node_modules. The server runs as root
+#   runtime  → node:22-bookworm-slim with Python 3.12 + pip, production
+#              dependencies installed with `npm ci` (NOT copied from the
+#              builder), and the compiled output. The server runs as root
 #              so the opt-in identity sandbox can drop tool processes to
 #              the restricted pi-tools UID/GID.
 #
@@ -99,7 +100,6 @@ ARG PUID=1000
 ARG PGID=1000
 ARG PTOOLS_UID=1001
 ARG PTOOLS_GID=1001
-ARG TEA_VERSION=0.14.1
 
 # Some upstream base images have shipped a pre-baked `node` user/group
 # at UID/GID 1000 — the same default we want for `pi`. Drop it before
@@ -111,60 +111,28 @@ ARG TEA_VERSION=0.14.1
 #   - git: status / diff / commit / push / etc. — the GitPanel routes
 #     and the agent's `bash` tool both expect git on PATH. Also used by
 #     pi-forge's "clone repository" project-setup flow.
-#   - gh: the GitHub CLI. Authenticates against github.com / GHE via
-#     `gh auth login` (more ergonomic than wrangling raw PATs / SSH
-#     keys), wraps git for HTTPS clones with stored credentials, and
-#     gives the agent + interactive terminal a first-class surface for
-#     `gh pr`, `gh issue`, `gh repo`, etc. Not in Debian's default
-#     repos — installed from GitHub's apt source (the keyring and
-#     sources.list lines below).
-#   - tea: the Gitea/Forgejo CLI. Debian bookworm does not reliably
-#     provide the upstream Gitea tea CLI package, so install a pinned
-#     upstream release with per-architecture SHA-256 verification.
 #   - ripgrep: pi's `grep` tool delegates to ripgrep when present.
 #     Without it, code search inside the agent silently degrades.
 #   - bash: replaces dash as the integrated terminal's interactive
 #     shell. node-pty defaults to /bin/sh; we set SHELL=/bin/bash
 #     below so xterm sessions land in bash with readline + history +
 #     the prompt expansions users expect.
-#   - curl, ca-certificates, less, procps, vim: minimum interactive-terminal
+#   - curl, ca-certificates, less, procps: minimum interactive-terminal
 #     hygiene. curl for fetching, ca-certificates so HTTPS works, less
 #     so `git log` and similar pagers don't bomb, procps so `ps`/`top`
-#     are present for users debugging long-running tool processes, and vim
-#     provides a familiar in-terminal editor.
+#     are present for users debugging long-running tool processes.
 #   - python3/pip3: Python 3.12 package tooling from the official
 #     Python image. `python` and `py` are aliases for `python3`.
-#   - make, g++: native-module rebuild toolchain for people using the
-#     container as a development environment. `npm install` can rebuild
-#     node-pty when the mounted checkout's lockfile / Node ABI differs
-#     from the baked image; without Python node-gyp fails before it can
-#     compile the binding.
-#   - gnupg: needed only to verify the GitHub CLI apt-source signing
-#     key during install — kept in the same RUN so the keyring is
-#     present when `apt-get install gh` runs.
+#
+# Not installed: `gh`, `tea`, and gnupg (GitHub CLI apt source/keyring
+# and the pinned Gitea tea release), plus `vim` — an
+# interactive-editing nicety at ~35 MB uncompressed. `make g++` are not
+# in this apt RUN either: the runtime `npm ci` installs them
+# transiently (node-pty compiles from source) and purges them in the
+# same layer, so the toolchain is never part of the image.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini gosu git ripgrep bash curl ca-certificates less procps vim make g++ gnupg \
- && install -dm 0755 /etc/apt/keyrings \
- && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
- && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends gh \
- && tea_arch="$(dpkg --print-architecture)" \
- && case "$tea_arch" in \
-      amd64) tea_sha256="3cf7c5d1c20808c9ba2efb9ac125cee10d969daf398e653ea2b33cde201ea317" ;; \
-      arm64) tea_sha256="0947b07f15fd2dde1768e0eb8c8619f280f45fb08b8895a11b64f6ba94b13dbf" ;; \
-      armhf) tea_arch="arm-7"; tea_sha256="5c648d888cc016fd2a95cbeedc3688c7de03fd71c8902c4c14a78d812e7d6bc9" ;; \
-      *) echo "unsupported tea architecture: $tea_arch" >&2; exit 1 ;; \
-    esac \
- && curl -fsSL "https://dl.gitea.com/tea/${TEA_VERSION}/tea-${TEA_VERSION}-linux-${tea_arch}" \
-      -o /usr/local/bin/tea \
- && echo "$tea_sha256  /usr/local/bin/tea" | sha256sum -c - \
- && chmod 0755 /usr/local/bin/tea \
- && tea --version \
+      tini gosu git ripgrep bash curl ca-certificates less procps \
  && rm -rf /var/lib/apt/lists/* \
  && (userdel node 2>/dev/null || true) \
  && (groupdel node 2>/dev/null || true) \
@@ -176,15 +144,55 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Copy from the builder: hoisted node_modules + all built workspaces.
-# npm workspaces hoists deps to the root /app/node_modules — there is
-# no per-package node_modules directory to copy. Bringing the package
-# manifests + built artifacts is enough; module resolution walks up
-# from packages/server/dist into /app/node_modules.
-COPY --from=builder --chown=pi:pi /app/node_modules ./node_modules
-RUN if [ -d /app/node_modules/@earendil-works/pi-coding-agent ]; then \
+# Production dependency install in the runtime image itself: only the
+# lockfile + workspace manifests are needed, then `npm ci` builds a
+# fresh, npm-owned node_modules. This replaces the builder's node_modules
+# COPY; native modules are installed against this image's Node ABI, and
+# `--omit=dev` keeps build-time-only packages (typescript, vite, eslint,
+# …) out of the final image.
+#
+# Only the SERVER workspace is installed (`-w @pi-forge/server`): the
+# client is a static Vite build served from packages/client/dist, so its
+# dependencies (react, codemirror, katex, xterm, …) would be dead weight
+# in the runtime image. npm hoists to /app/node_modules — module
+# resolution walks up from packages/server/dist.
+#
+# node-pty has no prebuild for this image's Node ABI, so `npm ci`
+# compiles it from source: make/g++ are installed transiently and
+# purged again in the same RUN so the toolchain never lands in the
+# layer (only libstdc++, already present for node, remains). The npm
+# cache (already-gzipped tarballs, ~100 MB uncompressible) is deleted
+# in the same RUN; the npm toolchain itself is kept (~30 MB) so
+# in-container `npm install` keeps working (pi extension installs, the
+# agent's bash tool, …). Note that native-module rebuilds also need
+# `make g++` — add it back to the apt RUN if you rely on those.
+#
+# Cross-platform dead weight is pruned after install:
+#   - node-pty/prebuilds (58 MB): darwin/win32 prebuilt binaries; this
+#     glibc linux image uses the pty.node compiled by the npm ci above
+#   - @napi-rs/canvas-linux-x64-musl (28 MB): musl variant of the
+#     canvas binding pdf-parse pulls in; only the glibc build is used.
+#     Note: canvas itself is REQUIRED at runtime — pdf-parse loads
+#     pdfjs-dist's legacy build, which needs canvas's DOMMatrix
+#     polyfill at module scope (pdf.mjs: `const SCALE_MATRIX = new
+#     DOMMatrix()`); removing it crashes PDF text extraction.
+COPY --chown=pi:pi package.json package-lock.json ./
+COPY --chown=pi:pi packages/server/package.json packages/server/
+COPY --chown=pi:pi packages/client/package.json packages/client/
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends make g++ \
+ && npm ci --workspace @pi-forge/server --include-workspace-root --omit=dev \
+ && rm -rf /root/.npm \
+ && apt-get purge -y --auto-remove make g++ \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /app/node_modules/node-pty/prebuilds \
+ && rm -rf /app/node_modules/@napi-rs/canvas-linux-x64-musl \
+ && if [ -d /app/node_modules/@earendil-works/pi-coding-agent ]; then \
       chmod -R a+rX,u+w,go-w /app/node_modules/@earendil-works/pi-coding-agent; \
-    fi
+    fi \
+ && chown -R pi:pi /app/node_modules
+
+# Compiled artifacts from the builder (no node_modules).
 COPY --from=builder --chown=pi:pi /app/package.json ./package.json
 COPY --from=builder --chown=pi:pi /app/packages/server/package.json ./packages/server/package.json
 COPY --from=builder --chown=pi:pi /app/packages/server/dist ./packages/server/dist
@@ -196,14 +204,16 @@ COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/di
 # the server runs as `pi`, and pi-owned config/data dirs are writable by it.
 # Sandbox deployments must explicitly permission their mounts; see
 # docs/agent-tool-sandbox.md.
-RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi-tools/.config \
- && chown -R pi:pi /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm \
+RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi/.pi/npm/node_global /home/pi-tools/.config \
+ && chown -R pi:pi /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi/.pi/npm \
  && chown -R pi-tools:pi-tools /home/pi-tools \
  && chown pi:pi /home/pi \
  && chown pi:pi-tools /home/pi/.pi \
  && chmod 0775 /workspace \
  && chmod 0755 /home/pi /home/pi/.pi \
- && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi-tools
+ && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi-tools \
+ && printf 'prefix=/home/pi/.pi/npm/node_global\n' > /home/pi/.npmrc \
+ && chown pi:pi /home/pi/.npmrc
 
 RUN cat >/usr/local/bin/pi-forge-entrypoint <<'EOF'
 #!/bin/sh
@@ -255,7 +265,23 @@ case "$(printf '%s' "${AGENT_TOOL_SANDBOX_ENABLED:-false}" | tr '[:upper:]' '[:l
     # need SETUID/SETGID capabilities; the root fallback preserves
     # compatibility for `docker run` invocations without --user.
     # Sandbox startup chown paths are skipped here because sandbox is off.
+    #
+    # Root fallback also normalises pi-owned dirs before dropping to pi:
+    # bind mounts (workspace, config/data dirs, home subdirs) keep host
+    # ownership, which would break writes as pi — config.json/jwt-secret,
+    # `pip install --user`, the npm cache, and `npm install -g` (global
+    # prefix /home/pi/.pi/npm/node_global). Missing paths are recreated
+    # and everything chowned to pi so mounted volumes behave like the
+    # image-layer defaults.
     if [ "$(id -u)" = "0" ]; then
+      for dir in "${WORKSPACE_PATH:-/workspace}" \
+                 "${PI_CONFIG_DIR:-/home/pi/.pi/agent}" \
+                 "${FORGE_DATA_DIR:-/home/pi/.pi-forge}" \
+                 "${PYTHONUSERBASE:-/home/pi/.local}" \
+                 /home/pi/.pi /home/pi/.npm /home/pi/.pi/npm/node_global; do
+        mkdir -p "$dir"
+        chown -R pi:pi "$dir"
+      done
       exec gosu pi "$@"
     fi
     exec "$@"
@@ -271,20 +297,23 @@ USER root
 # helps line-editing programs pick a sane terminfo entry inside xterm.
 #
 # PATH prepends /home/pi/.local/bin for scripts installed by
-# `python3 -m pip install --user ...`, then /app/node_modules/.bin so
-# the `pi` CLI shipped by @mariozechner/pi-coding-agent (already a
-# server dep) is on PATH for the running server and any process it
-# spawns. The pi-subagents plugin shells out via
-# `child_process.spawn("pi", ...)` with no fallback resolution on Linux
-# — without this, the subagent tool fails with `spawn pi ENOENT` inside
-# the container.
+# `python3 -m pip install --user ...`, then the pi user's npm global
+# prefix bin (/home/pi/.pi/npm/node_global — /home/pi/.npmrc sets the
+# prefix, so `npm install -g` inside the container lands there), then
+# /app/node_modules/.bin so the `pi` CLI shipped by
+# @earendil-works/pi-coding-agent (already a server dep, so it survives
+# `npm ci --omit=dev`) is on PATH for the running server and any process
+# it spawns. The pi-subagents plugin shells out via
+# `child_process.spawn("pi", ...)` with no fallback resolution on
+# Linux — without this, the subagent tool fails with `spawn pi ENOENT`
+# inside the container.
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
     HOME=/home/pi \
     USER=pi \
     LOGNAME=pi \
-    PATH=/home/pi/.local/bin:/app/node_modules/.bin:$PATH \
+    PATH=/home/pi/.local/bin:/home/pi/.pi/npm/node_global/bin:/app/node_modules/.bin:$PATH \
     WORKSPACE_PATH=/workspace \
     PI_CONFIG_DIR=/home/pi/.pi/agent \
     FORGE_DATA_DIR=/home/pi/.pi-forge \
