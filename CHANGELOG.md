@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.9] — 2026-08-15
+
 ### Added
 
 - **Config reload over REST and in the UI.** New `POST /api/v1/config/reload`
