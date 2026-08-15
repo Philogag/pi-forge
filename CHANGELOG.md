@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.8] — 2026-08-15
+
 ### Changed
 
 - **Release pipeline now ships the GHCR image only.** The release workflow no
