@@ -32,7 +32,7 @@ import {
   ensureProjectLoaded as mcpEnsureProjectLoaded,
   getStatus as mcpGetStatus,
 } from "../mcp/manager.js";
-import { BUILTIN_TOOL_NAMES } from "../session-registry.js";
+import { BUILTIN_TOOL_NAMES, reloadAllLiveSessions } from "../session-registry.js";
 import { discoverExtensionResources } from "../extensions-discovery.js";
 import {
   getAllToolOverrides,
@@ -1814,6 +1814,67 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           name: req.params.name,
           projectId: req.query.projectId,
         };
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  // ---------------------- runtime reload ----------------------
+  // Expose pi's native /reload to the browser: reload the agent runtime of
+  // every live session so config changes (settings.json, providers, auth,
+  // extensions, skills, prompts, themes, context files) take effect without
+  // creating a new session. Semantics match `AgentSession.reload()` — NOT a
+  // pi-forge process restart, and mcp.json is NOT re-read here (MCP config
+  // is applied live on save via mcp/manager.reloadGlobal). In-flight agent
+  // runs are aborted as part of each session's reload.
+  fastify.post(
+    "/config/reload",
+    {
+      schema: {
+        description:
+          "Reload the agent runtime of every live session with pi native reload semantics " +
+          "(equivalent to pi TUI /reload): re-reads `settings.json`, refreshes API " +
+          "providers/credentials, reloads the resource loader (extensions, skills, prompts, " +
+          "themes, context files) and rebuilds the tool registry. Custom tools (MCP-bridged, " +
+          "ask/todo/process, orchestration) are preserved; in-flight agent runs are aborted. " +
+          "Does NOT re-read `mcp.json` (MCP config applies live on save) and does NOT restart " +
+          "the pi-forge process. Responds 200 with `{ reloaded, failures }`; 500 `agent_error` " +
+          "when every live session failed to reload.",
+        tags: ["config"],
+        response: {
+          200: {
+            type: "object",
+            required: ["reloaded", "failures"],
+            properties: {
+              reloaded: { type: "integer" },
+              failures: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["sessionId", "error"],
+                  properties: {
+                    sessionId: { type: "string" },
+                    error: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          500: errorSchema,
+        },
+      },
+    },
+    async (_req, reply) => {
+      try {
+        const { reloaded, failures } = await reloadAllLiveSessions();
+        if (failures.length > 0 && reloaded === 0) {
+          return reply.code(500).send({
+            error: "agent_error",
+            message: failures.map((f) => `${f.sessionId}: ${f.error}`).join("; "),
+          });
+        }
+        return { reloaded, failures };
       } catch (err) {
         return internalError(reply, err);
       }

@@ -609,6 +609,57 @@ async function main(): Promise<void> {
       // creation interact poorly. Smoke check only.)
     }
 
+    // 9. config reload — pi native runtime reload.
+    //    a) No live sessions → 200 { reloaded: 0, failures: [] }.
+    //    b) With a live session → the global reload reports reloaded >= 1,
+    //       and the per-session endpoint answers 200 with
+    //       { sessionId, reloaded: true }.
+    //    c) Unknown session id → 404 session_not_found.
+    {
+      const empty = await jsend(base, "POST", "/api/v1/config/reload");
+      assert("POST /config/reload with no live sessions → 200", empty.status === 200);
+      assert(
+        "  body is { reloaded: 0, failures: [] }",
+        JSON.stringify(empty.body) === '{"reloaded":0,"failures":[]}',
+        JSON.stringify(empty.body),
+      );
+
+      // Create a live session (projectId from section 7 is still around).
+      const sess = await jsend(base, "POST", "/api/v1/sessions", { projectId });
+      assert("create session for reload → 201", sess.status === 201);
+      const sessionId = (sess.body as { sessionId: string }).sessionId;
+
+      const globalReload = await jsend(base, "POST", "/api/v1/config/reload");
+      assert("POST /config/reload with a live session → 200", globalReload.status === 200);
+      const gBody = globalReload.body as { reloaded: number; failures: unknown[] };
+      assert(
+        "  reloaded >= 1",
+        typeof gBody.reloaded === "number" && gBody.reloaded >= 1,
+        JSON.stringify(gBody),
+      );
+      assert(
+        "  failures is empty",
+        Array.isArray(gBody.failures) && gBody.failures.length === 0,
+        JSON.stringify(gBody.failures),
+      );
+
+      const perSession = await jsend(base, "POST", `/api/v1/sessions/${sessionId}/reload`);
+      assert("POST /sessions/:id/reload on live session → 200", perSession.status === 200);
+      assert(
+        "  body is { sessionId, reloaded: true }",
+        JSON.stringify(perSession.body) === JSON.stringify({ sessionId, reloaded: true }),
+        JSON.stringify(perSession.body),
+      );
+
+      const unknown = await jsend(base, "POST", "/api/v1/sessions/no-such-session/reload");
+      assert("POST /sessions/:id/reload on unknown id → 404", unknown.status === 404);
+      assert(
+        "  error is session_not_found",
+        (unknown.body as { error?: string }).error === "session_not_found",
+        JSON.stringify(unknown.body),
+      );
+    }
+
     // Suppress unused-variable warning for projectId (it's used inside its
     // own block above).
     void projectId;

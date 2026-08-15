@@ -2131,6 +2131,85 @@ export async function rebuildAgentSessionForTools(
   return live;
 }
 
+const RELOAD_TIMEOUT_MS = 30_000;
+
+interface ReloadFailure {
+  sessionId: string;
+  error: string;
+}
+
+/**
+ * Core single-session reload. Reloads one live session's agent runtime with
+ * pi native reload semantics (SDK `AgentSession.reload()`): `settings.json`
+ * is re-read, API providers/credentials are refreshed, the resource loader
+ * is reloaded (extensions, skills, prompts, themes, context files), and the
+ * tool registry is rebuilt. `_customTools` (MCP-bridged tools,
+ * ask/todo/process, orchestration) are preserved by the SDK across the
+ * rebuild, and the tool allowlist is re-applied. Any in-flight agent run is
+ * aborted as part of the reload — the SDK emits
+ * `session_shutdown(reason: "reload")` then `session_start(reason:
+ * "reload")`, which the registry's `makeSubscribeHandler` dispatches to SSE
+ * clients (unknown event types are silently ignored).
+ *
+ * The reload is wrapped in a 30s `Promise.race` timeout so a hung SDK
+ * reload can't block the HTTP request indefinitely (same hang-defense
+ * budget as `routes/control.ts` setModel). Throws and timeouts are caught
+ * and normalized to `{ sessionId, error }` — this function never throws.
+ */
+async function reloadLiveSession(live: LiveSession): Promise<ReloadFailure | undefined> {
+  try {
+    await Promise.race([
+      live.session.reload(),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("reload timed out after 30s")),
+          RELOAD_TIMEOUT_MS,
+        ).unref();
+      }),
+    ]);
+    live.lastActivityAt = new Date();
+    return undefined;
+  } catch (err) {
+    return { sessionId: live.sessionId, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Reload the agent runtime of every live session (pi native reload
+ * semantics — see `reloadLiveSession`). Each session is reloaded
+ * independently: a failure in one never blocks the others, so the route
+ * never leaves the user with a partial effect and no explanation. Returns
+ * the count of successful reloads plus one failure entry per failed session
+ * (a session is "reloaded" only when its reload resolved).
+ */
+export async function reloadAllLiveSessions(): Promise<{
+  reloaded: number;
+  failures: ReloadFailure[];
+}> {
+  const failures: ReloadFailure[] = [];
+  let reloaded = 0;
+  for (const live of listSessions()) {
+    const failure = await reloadLiveSession(live);
+    if (failure !== undefined) failures.push(failure);
+    else reloaded += 1;
+  }
+  return { reloaded, failures };
+}
+
+/**
+ * Reload a single live session's agent runtime by id (pi native reload
+ * semantics — see `reloadLiveSession`). Returns `undefined` on success, a
+ * `{ sessionId, error }` entry when the reload threw or timed out, or
+ * `null` when no live session has the id (routes resolve the "not found"
+ * case via `requireLiveOrRejectExternal` before calling this, so `null`
+ * here is defensive).
+ */
+export async function reloadSession(sessionId: string): Promise<ReloadFailure | undefined | null> {
+  const live = registry.get(sessionId);
+  if (live === undefined) return null;
+  return reloadLiveSession(live);
+}
+
 /** Number of currently-live sessions across all projects. Used by /health. */
 export function sessionCount(): number {
   return registry.size;

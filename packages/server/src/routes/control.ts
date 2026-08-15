@@ -7,6 +7,7 @@ import {
   getSession,
   listSessionsForProject,
   rejectOrDisposeExternallyActiveSession,
+  reloadSession,
   SessionNotFoundError,
   type LiveSession,
 } from "../session-registry.js";
@@ -730,6 +731,58 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!result.ok) return reply.code(result.status).send(result.body);
       return { level: result.level };
+    },
+  );
+
+  // Per-session runtime reload. Same pi native reload semantics as
+  // POST /api/v1/config/reload but scoped to one live session — used by the
+  // ChatView toolbar Reload button. The session must be live and owned by
+  // pi-forge: requireLiveOrRejectExternal answers 404 / 409 otherwise.
+  // In-flight agent runs are aborted as part of the reload.
+  fastify.post<{ Params: { id: string } }>(
+    "/sessions/:id/reload",
+    {
+      schema: {
+        description:
+          "Reload the agent runtime of the specified live session with pi native reload " +
+          "semantics (same as `POST /api/v1/config/reload` but for one session): re-reads " +
+          "`settings.json`, refreshes API providers/credentials, reloads the resource loader " +
+          "(extensions, skills, prompts, themes, context files) and rebuilds the tool registry. " +
+          "Custom tools are preserved; in-flight agent runs are aborted. Returns 404 " +
+          "`session_not_found` when the session is not live, 409 when the session is " +
+          "externally active (pi-subagents child / pi TUI), and 500 `agent_error` when the " +
+          "reload itself fails.",
+        tags: ["sessions"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string" } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["sessionId", "reloaded"],
+            properties: {
+              sessionId: { type: "string" },
+              reloaded: { type: "boolean" },
+            },
+          },
+          404: errorSchema,
+          409: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const live = await requireLiveOrRejectExternal(req.params.id, reply);
+      if (live === undefined) return reply;
+      const failure = await reloadSession(req.params.id);
+      if (failure === null) return notFound(reply); // defensive — requireLiveOrRejectExternal already checked
+      if (failure !== undefined) {
+        req.log.error({ err: failure.error, sessionId: req.params.id }, "session reload failed");
+        return reply.code(500).send({ error: "agent_error", message: failure.error });
+      }
+      return { sessionId: req.params.id, reloaded: true };
     },
   );
 };

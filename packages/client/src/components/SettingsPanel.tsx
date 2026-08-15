@@ -4444,6 +4444,19 @@ function GeneralTab() {
       </section>
 
       <section className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Runtime</h3>
+        <p className="text-xs text-neutral-500">
+          Reload the agent runtime of every live session — re-reads settings, API providers,
+          extensions, skills, prompts, themes and context files. Equivalent to pi TUI{" "}
+          <code className="rounded bg-neutral-800 px-1 py-0.5 font-mono text-neutral-300">
+            /reload
+          </code>
+          . In-flight agent runs are interrupted.
+        </p>
+        <RestartButton />
+      </section>
+
+      <section className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Links</h3>
         <ul className="space-y-1 text-xs">
           <li>
@@ -4480,6 +4493,67 @@ function GeneralTab() {
       </section>
 
       {showChangePassword && <ChangePasswordSection />}
+    </div>
+  );
+}
+
+/**
+ * Restart (reload) every live session's agent runtime. Local
+ * pending/success/error state — GeneralTab has no onError prop, and the
+ * reload outcome is a one-shot action with no store representation, so the
+ * button owns its own feedback inline.
+ */
+function RestartButton() {
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | undefined>(undefined);
+  const restart = async (): Promise<void> => {
+    if (
+      !window.confirm(
+        "Restart the agent runtime of every live session? In-flight agent runs will be interrupted.",
+      )
+    ) {
+      return;
+    }
+    setPending(true);
+    setMessage(undefined);
+    try {
+      const { reloaded, failures } = await api.reloadConfig();
+      if (failures.length > 0) {
+        setMessage({
+          ok: false,
+          text: `Restarted ${reloaded} session(s); ${failures.length} failed (${failures
+            .map((f) => `${f.sessionId.slice(0, 8)}: ${f.error}`)
+            .join("; ")})`,
+        });
+      } else if (reloaded === 0) {
+        setMessage({
+          ok: true,
+          text: "No active sessions — changes apply to the next new session.",
+        });
+      } else {
+        setMessage({ ok: true, text: `Restarted ${reloaded} session(s).` });
+      }
+    } catch (err) {
+      setMessage({ ok: false, text: `Restart failed: ${errorCode(err)}` });
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => void restart()}
+        disabled={pending}
+        className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500 disabled:opacity-50"
+      >
+        {pending ? "Restarting…" : "Restart"}
+      </button>
+      {message !== undefined && (
+        <p role="status" className={`text-xs ${message.ok ? "text-emerald-400" : "text-red-400"}`}>
+          {message.text}
+        </p>
+      )}
     </div>
   );
 }

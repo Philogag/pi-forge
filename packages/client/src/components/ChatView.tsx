@@ -19,6 +19,7 @@ import {
   ExternalLink,
   FileCode,
   GitBranch,
+  RefreshCw,
   Rows2,
   Users,
   X,
@@ -217,6 +218,37 @@ export function ChatView({ sessionId }: Props) {
   const isMobile = useIsMobile();
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportError, setExportError] = useState<string | undefined>(undefined);
+  const [reloadPending, setReloadPending] = useState(false);
+  const [reloadStatus, setReloadStatus] = useState<{ ok: boolean; text: string } | undefined>(
+    undefined,
+  );
+  const reloadCurrentSession = async (): Promise<void> => {
+    if (
+      !window.confirm(
+        "Reload this session's agent runtime? In-flight agent runs will be interrupted.",
+      )
+    ) {
+      return;
+    }
+    setReloadPending(true);
+    setReloadStatus(undefined);
+    try {
+      await api.reloadSession(sessionId);
+      setReloadStatus({ ok: true, text: "Reloaded" });
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : "";
+      if (code === "session_not_found") {
+        setReloadStatus({ ok: false, text: "Session is no longer active" });
+      } else {
+        setReloadStatus({
+          ok: false,
+          text: `Reload failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    } finally {
+      setReloadPending(false);
+    }
+  };
   const exportMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!exportMenuOpen) return;
@@ -477,6 +509,27 @@ export function ChatView({ sessionId }: Props) {
                 <Users size={11} />
                 Orch
               </button>
+            )}
+            <button
+              onClick={() => void reloadCurrentSession()}
+              disabled={reloadPending}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-50"
+              title="Reload this session's agent runtime (re-read settings, providers, extensions, skills)"
+            >
+              <RefreshCw size={11} className={reloadPending ? "animate-spin" : undefined} />
+              Reload
+            </button>
+            {reloadStatus !== undefined && (
+              <span
+                role="status"
+                className={`text-[10px] ${
+                  reloadStatus.ok
+                    ? "text-emerald-400 light:text-emerald-700"
+                    : "text-red-400 light:text-red-700"
+                }`}
+              >
+                {reloadStatus.text}
+              </span>
             )}
           </div>
         </div>

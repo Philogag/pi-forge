@@ -2002,6 +2002,25 @@ export const api = {
       { method: "POST", body: { level } },
     ),
 
+  /**
+   * Reload one live session's agent runtime with pi native reload
+   * semantics (same as `reloadConfig`, scoped to a single session).
+   * In-flight agent runs are aborted. The server answers 404
+   * `session_not_found` when the session is no longer live — the caller
+   * should treat that as "session gone" and refresh UI state.
+   */
+  reloadSession: (id: string) =>
+    request(
+      `/api/v1/sessions/${encodeURIComponent(id)}/reload`,
+      (v, s) => {
+        if (!isObject(v) || typeof v.sessionId !== "string" || v.reloaded !== true) {
+          fail(s, "expected { sessionId, reloaded: true }");
+        }
+        return { sessionId: v.sessionId, reloaded: true as const };
+      },
+      { method: "POST" },
+    ),
+
   // ---------------- config ----------------
   getModelsJson: () => request("/api/v1/config/models", vModelsJson),
   setModelsJson: (data: { providers: Record<string, unknown> }) =>
@@ -2036,6 +2055,37 @@ export const api = {
     request(`/api/v1/config/auth/${encodeURIComponent(provider)}`, vVoid, {
       method: "DELETE",
     }),
+
+  /**
+   * Reload every live session's agent runtime with pi native reload
+   * semantics (equivalent to pi TUI /reload): re-reads settings, refreshes
+   * API providers/credentials, reloads extensions/skills/prompts/themes/
+   * context files and rebuilds the tool registry. In-flight agent runs are
+   * aborted. Returns the number of sessions reloaded plus per-session
+   * failures. `reloaded === 0` with empty `failures` means no live session
+   * — config changes apply to the next session created.
+   */
+  reloadConfig: () =>
+    request(
+      "/api/v1/config/reload",
+      (v, s) => {
+        if (
+          !isObject(v) ||
+          typeof v.reloaded !== "number" ||
+          !Array.isArray(v.failures) ||
+          !v.failures.every(
+            (f) => isObject(f) && typeof f.sessionId === "string" && typeof f.error === "string",
+          )
+        ) {
+          fail(s, "expected { reloaded, failures: [{ sessionId, error }] }");
+        }
+        return {
+          reloaded: v.reloaded,
+          failures: v.failures as { sessionId: string; error: string }[],
+        };
+      },
+      { method: "POST" },
+    ),
 
   // ---------------- mcp ----------------
   getMcpSettings: () => request("/api/v1/mcp/settings", vMcpSettings),
