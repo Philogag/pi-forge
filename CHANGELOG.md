@@ -15,6 +15,51 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Plugin configuration compatibility framework.** New `GET /api/v1/config/plugin-configs`,
+  `GET /api/v1/config/plugin-configs/:package`, `PUT /api/v1/config/plugin-configs/:package`,
+  and `POST /api/v1/config/plugin-configs/reload` endpoints backed by a new
+  `plugin-config` store (read-modify-write with atomic tmp+rename writes and
+  per-file locking). A registration surface (`extensions-settings-compat`)
+  lets plugins declare their config file structure — field name, JSON path,
+  type, limits, and description — either by capturing the
+  `pi-extension-settings:register` extension event (declarations are derived
+  from `settings-extensions.json`) or by manually registering declarations in
+  the per-plugin `compat` modules (billion-context-pi `acp.json`,
+  `pi-provider-litellm` / `pi-provider-omniroute` `settings.json` blocks).
+  Declarations render as a typed form in a new plugin config modal (scalar
+  inputs, boolean toggles, enum dropdowns, sortable multi-selects, raw JSON
+  editing), opened from the package card gear in Settings > Extensions.
+  Path validation restricts writes to JSON files under `PI_CONFIG_DIR`
+  (traversal attempts return 403); partial field updates preserve unknown
+  keys; `settings-extensions.json` stays string-coerced for pi semantics.
+  `PLUGIN_CONFIG_CAPTURE` (default `true`) disables the extension-event
+  capture source.
+- **Plugin-provided API key providers in the Providers tab.** Extension
+  `registerProvider` calls are captured at load time (no proxy hook — the SDK
+  exposes the pending-registration queue) and merged into the providers
+  listing with a `via <package>` badge and model count, so providers shipped
+  by packages such as `pi-provider-litellm` or `pi-provider-omniroute` appear
+  automatically next to built-in providers. `POST /api/v1/config/providers/:provider/refresh`
+  refreshes a plugin provider's models through the SDK `ModelRuntime` (with a
+  60s timeout) and persists them to `models-store.json`, restoring them on
+  restart; native (single-argument) provider registrations are refreshed
+  through `registerNativeProvider`. The Providers tab adds a per-plugin
+  Refresh models button and an amber pending banner while the registry is
+  still loading.
+- **Compatibility declarations for plugin config files.** The
+  `extensions-settings-compat` directory now ships one module per plugin
+  (billion-context-pi, pi-provider-litellm, pi-provider-omniroute) declaring
+  the editable fields of their config files, including nested JSON paths and
+  enum option lists.
+
+### Changed
+
+- **pi user can use sudo in legacy Docker mode.** The Docker image allows the
+  `pi` user `sudo` (no password) when running in legacy mode, matching
+  interactive container workflows.
+
 ## [1.4.9] — 2026-08-15
 
 ### Added
