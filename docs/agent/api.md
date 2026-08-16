@@ -73,6 +73,29 @@ with `security: []` in their schema to reflect this in the spec.
 
 ---
 
+## Plugin Configs
+
+Pi extensions can register configuration-form metadata for their own config
+file by emitting `pi-extension-settings:register` (the contract used by
+`@juanibiapina/pi-extension-settings`) at load time; pi-forge captures these
+declarations at startup and merges them with manual registrations from
+`packages/server/src/extensions-settings-compat/index.ts` (for plugins that don't emit the event).
+The merged registry drives a generated settings form in the browser
+(Settings → Extensions → gear icon on a package card) and a raw-JSON editor.
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/config/plugin-configs` | List all declarations; each item has `package`, `label`, `description?`, `file` (relative to `PI_CONFIG_DIR`), `source` (`extension-event`\|`compat`), `fields`, `exists`, `values` (current file values). Top-level `ready` (capture finished) and `errors` (capture diagnostics). A missing or invalid file still returns the declaration (`exists: false` or empty values) — the list never fails wholesale. |
+| `GET /api/v1/config/plugin-configs/:package` | Single declaration summary; unknown package → 404 `not_found`. |
+| `PUT /api/v1/config/plugin-configs/:package` | Save. Body is `{ values: { path: value } }` (partial field update — unknown keys in the target file are preserved) or `{ raw: "…" }` (atomic whole-file replace after JSON validation; may contain keys outside the declaration). `values` and `raw` are mutually exclusive → 400. Field values for `settings-extensions.json` are string-coerced to match pi's `getSetting` semantics. Errors: 400 `validation_failed`/`invalid_json`, 403 `traversal`, 404 `not_found`, 500 `agent_error`. |
+| `POST /api/v1/config/plugin-configs/reload` | Fire-and-forget registry refresh (re-runs extension capture in the background). Poll the GET list until `ready: true` to observe the result. |
+
+All file writes are atomic (`tmp` + `rename`); traversal outside `PI_CONFIG_DIR`
+is rejected with 403 before any read/write. The full endpoint contract lives in
+the OpenAPI spec at `/api/docs/json`.
+
+---
+
 ## SSE Event Types
 
 The following `AgentSessionEvent` types are forwarded to browser clients.

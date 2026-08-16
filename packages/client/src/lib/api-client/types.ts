@@ -854,6 +854,51 @@ export interface UploadResponse {
   files: UploadedFile[];
 }
 
+// ---------------- plugin configs ----------------
+
+/** A single declared config field for a plugin's settings file. */
+export interface PluginConfigField {
+  kind: "scalar" | "multi-select";
+  path: string;
+  label: string;
+  description?: string;
+  type?: "string" | "number" | "boolean" | "enum";
+  defaultValue?: unknown;
+  required?: boolean;
+  min?: number;
+  max?: number;
+  pattern?: string;
+  secret?: boolean;
+  enum?: { value: string; label: string }[];
+  options?: { id: string; label: string }[];
+}
+
+/** Per-package config summary returned by the plugin-config endpoints. */
+export interface PluginConfigSummary {
+  package: string;
+  label: string;
+  description?: string;
+  file: string;
+  source: "extension-event" | "compat";
+  exists: boolean;
+  ready: boolean;
+  fields: PluginConfigField[];
+  values: Record<string, unknown>;
+  /** Full parsed file content (single-package GET only) for the raw editor. */
+  rawValue?: unknown;
+}
+
+export interface PluginConfigListResponse {
+  ready: boolean;
+  declarations: PluginConfigSummary[];
+  errors: { path: string; error: string }[];
+}
+
+/** PUT body: either typed values by field path, or a raw JSON replacement. */
+export type SavePluginConfigBody =
+  | { values?: Record<string, unknown>; raw?: never }
+  | { raw?: string; values?: never };
+
 /**
  * Internal request options for the `request()` helper. Not exported
  * via the public api-client surface; lives in types.ts so request.ts

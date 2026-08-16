@@ -48,6 +48,7 @@ import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
 import { applySandboxStartupChowns } from "./sandbox-startup-permissions.js";
 import { initializeLogoCache, logoCacheDir, LOGO_CACHE_PREFIX } from "./logo-cache.js";
+import { configurePluginConfigRegistry, refreshPluginConfigs } from "./plugin-config/registry.js";
 
 /**
  * Per-route auth metadata. Routes that should skip the auth preHandler set
@@ -460,6 +461,18 @@ export async function buildServer(): Promise<FastifyInstance> {
     },
     { prefix: "/api/v1" },
   );
+
+  // Boot-time plugin-config registry preload: capture
+  // `pi-extension-settings:register` events from enabled extensions in
+  // the background (fire-and-forget, does not block startup). GET
+  // /config/plugin-configs serves the current snapshot while capture
+  // runs; failures surface in the registry `errors` list.
+  configurePluginConfigRegistry({
+    cwd: config.workspacePath,
+    agentDir: config.piConfigDir,
+    captureEnabled: config.pluginConfigCapture,
+  });
+  void refreshPluginConfigs();
 
   // ---- static client (production) ----
   // In Docker / `npm run build && node dist/index.js`, Fastify serves the

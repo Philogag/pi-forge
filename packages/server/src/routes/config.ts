@@ -32,6 +32,24 @@ import {
   ensureProjectLoaded as mcpEnsureProjectLoaded,
   getStatus as mcpGetStatus,
 } from "../mcp/manager.js";
+import {
+  getConfigDeclaration,
+  getPluginConfigState,
+  refreshPluginConfigs,
+} from "../plugin-config/registry.js";
+import {
+  ConfigFileError,
+  putRaw,
+  putValues,
+  readDeclarationValues,
+  validateValues,
+} from "../plugin-config/store.js";
+import type {
+  PluginConfigListResponse,
+  PluginConfigSummary,
+  SavePluginConfigBody,
+} from "../plugin-config/types.js";
+import { SETTINGS_EXTENSIONS_FILE } from "../plugin-config/types.js";
 import { BUILTIN_TOOL_NAMES, reloadAllLiveSessions } from "../session-registry.js";
 import { discoverExtensionResources } from "../extensions-discovery.js";
 import { installPackage, listPackages, removePackage } from "../extensions-manager.js";
@@ -1996,7 +2014,16 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     async (req, reply) => {
       const { source, scope } = req.body as { source: string; scope: "user" | "project" };
       try {
-        return await installPackage(config.workspacePath, config.piConfigDir, source, scope);
+        const installed = await installPackage(
+          config.workspacePath,
+          config.piConfigDir,
+          source,
+          scope,
+        );
+        // Newly installed package may register settings — refresh the
+        // plugin-config registry in the background.
+        void refreshPluginConfigs();
+        return installed;
       } catch (err) {
         return internalError(reply, err);
       }
@@ -2044,10 +2071,217 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
             message: `Package "${source}" is not installed.`,
           });
         }
+        // Removed package may have contributed settings — refresh the
+        // plugin-config registry in the background.
+        void refreshPluginConfigs();
         return { removed: true };
       } catch (err) {
         return internalError(reply, err);
       }
+    },
+  );
+
+  /**
+   * Build a PluginConfigSummary from a declaration + file read state.
+   * Optional `description` is assigned conditionally to satisfy
+   * `exactOptionalPropertyTypes` (no explicit `undefined` on optionals).
+   */
+  function pluginConfigSummary(
+    d: {
+      package: string;
+      label: string;
+      description?: string;
+      file: string;
+      source: "extension-event" | "compat";
+      fields: import("../plugin-config/types.js").FieldDefinition[];
+    },
+    ready: boolean,
+    res: {
+      exists: boolean;
+      error?: "invalid_json";
+      values: Record<string, unknown>;
+      rawValue?: unknown;
+    },
+    includeRaw = false,
+  ): PluginConfigSummary {
+    const out: PluginConfigSummary = {
+      package: d.package,
+      label: d.label,
+      file: d.file,
+      source: d.source,
+      exists: res.exists,
+      ready,
+      fields: d.fields,
+      values: res.values,
+    };
+    if (d.description !== undefined) out.description = d.description;
+    if (includeRaw && res.rawValue !== undefined) out.rawValue = res.rawValue;
+    return out;
+  }
+
+  /**
+   * List plugin config declarations with per-declaration values read
+   * from their config file (missing file → exists:false; invalid JSON
+   * → exists:true + empty values). The list reflects the current
+   * registry snapshot — capture runs in the background, so `ready`
+   * may still be false while declarations are being collected.
+   */
+  fastify.get(
+    "/config/plugin-configs",
+    {
+      schema: {
+        tags: ["config"],
+        response: {
+          200: {
+            type: "object",
+            required: ["ready", "declarations", "errors"],
+            properties: {
+              ready: { type: "boolean" },
+              declarations: {
+                type: "array",
+                items: { type: "object", additionalProperties: true },
+              },
+              errors: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["path", "error"],
+                  properties: {
+                    path: { type: "string" },
+                    error: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          500: errorSchema,
+        },
+      },
+    },
+    async (_req, reply) => {
+      const st = getPluginConfigState();
+      const declarations: PluginConfigSummary[] = [];
+      for (const d of st.declarations) {
+        const res = await readDeclarationValues(d.file, config.piConfigDir, d.fields);
+        declarations.push(pluginConfigSummary(d, st.ready, res));
+      }
+      const body: PluginConfigListResponse = {
+        ready: st.ready,
+        declarations,
+        errors: st.errors,
+      };
+      return reply.send(body);
+    },
+  );
+
+  /** Single declaration summary; unknown package → 404 `not_found`. */
+  fastify.get(
+    "/config/plugin-configs/:package",
+    {
+      schema: {
+        tags: ["config"],
+        params: {
+          type: "object",
+          required: ["package"],
+          properties: { package: { type: "string" } },
+        },
+        response: { 404: errorSchema },
+      },
+    },
+    async (req, reply) => {
+      const { package: pkg } = req.params as { package: string };
+      const d = getConfigDeclaration(pkg);
+      if (d === undefined) return reply.code(404).send({ error: "not_found" });
+      const st = getPluginConfigState();
+      const res = await readDeclarationValues(d.file, config.piConfigDir, d.fields);
+      return reply.send(pluginConfigSummary(d, st.ready, res, true));
+    },
+  );
+
+  /**
+   * Save a plugin config: `{ values }` writes declared field paths
+   * (string-coerced for `settings-extensions.json`, matching pi's
+   * `getSetting` semantics) or `{ raw }` atomically replaces the whole
+   * file. `values` and `raw` are mutually exclusive.
+   */
+  fastify.put(
+    "/config/plugin-configs/:package",
+    {
+      schema: {
+        tags: ["config"],
+        body: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            values: { type: "object", additionalProperties: true },
+            raw: { type: "string" },
+          },
+        },
+        response: {
+          200: { type: "object", properties: { ok: { type: "boolean" } } },
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { package: pkg } = req.params as { package: string };
+      const d = getConfigDeclaration(pkg);
+      if (d === undefined) return reply.code(404).send({ error: "not_found" });
+      const body = req.body as SavePluginConfigBody;
+      if (body.values !== undefined && body.raw !== undefined) {
+        return reply.code(400).send({
+          error: "validation_failed",
+          message: "provide either values or raw, not both",
+        });
+      }
+      try {
+        if (body.raw !== undefined) {
+          await putRaw(d.file, config.piConfigDir, body.raw);
+        } else {
+          const values = body.values ?? {};
+          const check = validateValues(d.fields, values);
+          if (!check.ok) {
+            return reply.code(400).send({
+              error: "validation_failed",
+              message: check.error,
+              field: check.field,
+            });
+          }
+          const stringCoerce = d.file === SETTINGS_EXTENSIONS_FILE;
+          await putValues(d.file, config.piConfigDir, values, { stringCoerce });
+        }
+        return reply.send({ ok: true });
+      } catch (err) {
+        if (err instanceof ConfigFileError) {
+          if (err.code === "traversal") {
+            return reply.code(403).send({ error: "traversal", message: err.message });
+          }
+          if (err.code === "invalid_json" || err.code === "validation") {
+            return reply.code(400).send({ error: err.code, message: err.message });
+          }
+        }
+        return reply.code(500).send({ error: "agent_error", message: (err as Error).message });
+      }
+    },
+  );
+
+  /** Fire-and-forget registry refresh (capture re-runs in background). */
+  fastify.post(
+    "/config/plugin-configs/reload",
+    {
+      schema: {
+        tags: ["config"],
+        response: {
+          200: { type: "object", properties: { reloaded: { type: "boolean" } } },
+        },
+      },
+    },
+    async (_req, reply) => {
+      void refreshPluginConfigs();
+      return reply.send({ reloaded: true });
     },
   );
 };

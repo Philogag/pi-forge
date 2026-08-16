@@ -93,3 +93,6 @@ pi-webui-dev-plan.md
 workspace/
 forge/
 pi-forge/
+
+# SDD plan workspaces (subagent-driven-development ledger/briefs)
+.superpowers/

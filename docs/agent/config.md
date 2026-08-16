@@ -41,6 +41,15 @@ list of existing non-secret paths that startup may recursively prepare with
 container overlay), with group rwX bits; keep its allowed scope narrow. Keep
 sandbox env parsing in `config.ts` and the CLI surface in `cli.ts` together.
 
+`PLUGIN_CONFIG_CAPTURE` defaults `true` (`--plugin-config-capture`). When on,
+startup loads enabled extensions in the background and captures
+`pi-extension-settings:register` events to build the plugin-config registry
+(see `docs/agent/api.md` → Plugin Configs). Manual registrations from
+`packages/server/src/extensions-settings-compat/index.ts` are always included regardless of this
+flag. Set it to `false` to skip extension loading entirely at boot (extensions
+still load on-demand when a session needs them); capture failures are recorded
+in the registry's `errors` list and never block startup.
+
 ---
 
 ## Config Files
@@ -56,6 +65,7 @@ Never write directly from routes.
 | `PI_CONFIG_DIR/models.json` | Custom providers: vLLM, LiteLLM, Ollama, any OpenAI-compatible endpoint |
 | `PI_CONFIG_DIR/auth.json` | API keys and OAuth tokens for built-in providers |
 | `PI_CONFIG_DIR/settings.json` | Default model, thinking level, steering/followUp mode |
+| `PI_CONFIG_DIR/settings-extensions.json` | Extension-registered settings (pi `getSetting`/`setSetting`; `{extension: {id: value}}`, string values). Read/written by `plugin-config/store.ts` through the plugin-config registry — values are string-coerced on save to stay pi-compatible |
 
 **`FORGE_DATA_DIR` — pi-forge territory.** Pi-forge owns every file in this
 directory. Each one has a dedicated reader/writer module (don't `fs.*` from

@@ -46,6 +46,15 @@ pi-forge/
 │   │   │   ├── prompt-overrides.ts      # Per-project pi-prompt enable/disable (forge-private)
 │   │   │   ├── compaction-history.ts    # Per-session compaction event log
 │   │   │   ├── concurrency.ts           # Async-mutex helpers for serialized writes
+│   │   │   ├── plugin-config/           # Plugin config compat framework — see docs/agent/api.md
+│   │   │   │   ├── types.ts             # ConfigDeclaration / FieldDefinition / API types
+│   │   │   │   ├── paths.ts             # JSON dotted-path get/set + PI_CONFIG_DIR validation
+│   │   │   │   ├── store.ts             # Atomic declaration-based file read/write (values/raw)
+│   │   │   │   ├── capture.ts           # pi-extension-settings:register event capture
+│   │   │   │   └── registry.ts          # Merged declaration registry (capture > compat)
+│   │   │   ├── compat/                  # Manual in-repo plugin config registrations
+│   │   │   │   ├── index.ts             # COMPAT_DECLARATIONS + validateCompatDeclarations
+│   │   │   │   └── README.md            # How to register a plugin for compat
 │   │   │   ├── attachment-converters.ts # Image/text attachment normalization for prompt route
 │   │   │   ├── skills-export.ts         # Skills archive export
 │   │   │   ├── mcp/                     # MCP client manager + customTools bridge — see docs/mcp.md
@@ -167,6 +176,24 @@ separate HTTP call. The frontend SSE client must handle this event before all ot
 `session.prompt()` is always fire-and-forget from the HTTP perspective — returns
 202 immediately. The actual response streams over SSE.
 
+### Plugin Config Flow
+
+Pi extensions may register configuration metadata for their own config file at
+load time by emitting `pi-extension-settings:register`
+(`@juanibiapina/pi-extension-settings` contract). At boot, `index.ts` calls
+`configurePluginConfigRegistry()` + `refreshPluginConfigs()` (when
+`PLUGIN_CONFIG_CAPTURE` is on): `capture.ts` loads enabled package extensions via
+the SDK's `discoverAndLoadExtensions` with a fresh `createEventBus()` and records
+each registration event. Manual declarations in `extensions-settings-compat/index.ts`
+(`COMPAT_DECLARATIONS`, validated by `validateCompatDeclarations`) cover plugins
+that don't emit the event and bind to the plugin's own JSON file under
+`PI_CONFIG_DIR`. `registry.ts` merges both sources per package (event capture
+wins, compat fills missing fields) and serves the snapshot. Reads/writes of the
+declared JSON files go through `plugin-config/store.ts` (atomic `tmp`+`rename`,
+path confined to `PI_CONFIG_DIR`, string coercion for `settings-extensions.json`)
+and are exposed via the `/api/v1/config/plugin-configs*` routes. `routes/config.ts`
+also refreshes the registry when packages are installed/removed.
+
 ---
 
 ## Project Data Model
@@ -227,6 +254,10 @@ their JSONL files persist on disk — the registry is rebuilt lazily as clients 
 | `@fastify/websocket` | WebSocket support for terminal PTY (Phase 11) |
 | `jsonwebtoken` | JWT sign/verify for browser auth |
 | `node-pty` | PTY for integrated terminal (Phase 11) |
+
+`PI_CONFIG_DIR` file writes outside `config-manager.ts` also live in
+`plugin-config/store.ts` (same atomic-write discipline; the only writer of
+extension-registered config files such as `settings-extensions.json`).
 
 ### Client
 

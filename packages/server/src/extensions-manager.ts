@@ -260,3 +260,34 @@ export async function removePackage(
   const removed = await pm.removeAndPersist(source, { local: scope === "project" });
   return { removed };
 }
+
+/**
+ * Enumerate the entry paths of enabled extensions with a resolvable
+ * `metadata.source` (package origin), deduplicated. Used by
+ * `plugin-config/capture.ts` to load extension modules and observe
+ * `pi-extension-settings:register` events; top-level extensions
+ * (`agentDir/extensions`, `.pi/extensions`) are scanned by
+ * `discoverAndLoadExtensions` itself, so only package-contributed
+ * paths are returned here.
+ */
+export async function resolveEnabledExtensionPaths(
+  cwd: string,
+  agentDir: string,
+): Promise<string[]> {
+  const pm = await createPackageManager(cwd, agentDir);
+  // Capture is a pure observation pass: a configured-but-uninstalled package
+  // must NOT trigger an npm/git install as a side effect, so skip missing
+  // sources instead of using the SDK default ("install").
+  const resolved = await pm.resolve(async () => "skip");
+  const paths = new Set<string>();
+  for (const r of resolved.extensions) {
+    if (!r.enabled) continue;
+    const src = r.metadata.source;
+    if (typeof src !== "string" || src.length === 0) continue;
+    // Includes package-contributed entries (metadata.source set) and
+    // top-level auto-discovered extensions (source: "auto"); both may
+    // register settings and are valid capture targets.
+    paths.add(r.path);
+  }
+  return [...paths];
+}

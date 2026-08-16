@@ -435,6 +435,14 @@ const FLAGS: readonly FlagDef[] = [
     desc: "Append a secret-hygiene rule to the agent's system prompt",
     defaultText: "false",
   },
+  {
+    name: "plugin-config-capture",
+    env: "PLUGIN_CONFIG_CAPTURE",
+    type: "boolean",
+    group: "features",
+    desc: "Capture pi-extension-settings register events at startup (plugin config declarations)",
+    defaultText: "true",
+  },
   // sandbox
   {
     name: "agent-tool-sandbox-enabled",

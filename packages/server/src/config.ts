@@ -486,6 +486,13 @@ export const config = Object.freeze({
     100,
   ),
   /**
+   * Capture `pi-extension-settings:register` events from enabled
+   * extensions at startup so the browser UI can render plugin config
+   * forms (declarations live in the plugin-config registry). Enabled
+   * by default; operators disable it with `PLUGIN_CONFIG_CAPTURE=false`.
+   */
+  pluginConfigCapture: readBool("PLUGIN_CONFIG_CAPTURE", true),
+  /**
    * Whether `/api/docs` (Swagger UI + OpenAPI JSON spec) is reachable.
    * Defaults to true so Docker / production deploys keep working without
    * extra config (the README quickstart documents `/api/docs`). When

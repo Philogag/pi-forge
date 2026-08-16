@@ -69,6 +69,10 @@ import {
   type SessionTreeResponse,
   type UploadedFile,
   type UploadResponse,
+  type PluginConfigField,
+  type PluginConfigListResponse,
+  type PluginConfigSummary,
+  type SavePluginConfigBody,
   type RequestOpts,
   type Validator,
 } from "./types";
@@ -1773,6 +1777,63 @@ function vRemoveExtensionResult(value: unknown, status: number): { removed: bool
   return { removed: value.removed };
 }
 
+function vPluginConfigField(value: unknown, status: number): PluginConfigField {
+  if (
+    !isObject(value) ||
+    typeof value.path !== "string" ||
+    typeof value.label !== "string" ||
+    (value.kind !== "scalar" && value.kind !== "multi-select")
+  ) {
+    fail(status, "expected PluginConfigField");
+  }
+  return value as unknown as PluginConfigField;
+}
+
+function vPluginConfig(value: unknown, status: number): PluginConfigSummary {
+  if (
+    !isObject(value) ||
+    typeof value.package !== "string" ||
+    typeof value.label !== "string" ||
+    typeof value.file !== "string" ||
+    (value.source !== "extension-event" && value.source !== "compat") ||
+    typeof value.exists !== "boolean" ||
+    typeof value.ready !== "boolean" ||
+    !Array.isArray(value.fields) ||
+    !isObject(value.values)
+  ) {
+    fail(status, "expected PluginConfigSummary");
+  }
+  value.fields.forEach((f) => vPluginConfigField(f, status));
+  return value as unknown as PluginConfigSummary;
+}
+
+function vPluginConfigList(value: unknown, status: number): PluginConfigListResponse {
+  if (
+    !isObject(value) ||
+    typeof value.ready !== "boolean" ||
+    !Array.isArray(value.declarations) ||
+    !Array.isArray(value.errors)
+  ) {
+    fail(status, "expected { ready, declarations, errors }");
+  }
+  value.declarations.forEach((d) => vPluginConfig(d, status));
+  return value as unknown as PluginConfigListResponse;
+}
+
+function vSavePluginConfig(value: unknown, status: number): { ok: true } {
+  if (!isObject(value) || value.ok !== true) {
+    fail(status, "expected { ok: true }");
+  }
+  return { ok: true };
+}
+
+function vReloadPluginConfigs(value: unknown, status: number): { reloaded: true } {
+  if (!isObject(value) || value.reloaded !== true) {
+    fail(status, "expected { reloaded: true }");
+  }
+  return { reloaded: true };
+}
+
 export const api = {
   authStatus: () => request("/api/v1/auth/status", vAuthStatus, { skipAuth: true }),
   login: (password: string, username?: string) =>
@@ -2209,6 +2270,23 @@ export const api = {
       method: "POST",
       body: { source, scope },
     }),
+
+  // ---------------- plugin configs ----------------
+
+  /** List declared plugin configs (captured + compat) with current values. */
+  getPluginConfigs: () => request("/api/v1/config/plugin-configs", vPluginConfigList),
+  /** Fetch a single package's config summary. 404 not_found when undeclared. */
+  getPluginConfig: (pkg: string) =>
+    request(`/api/v1/config/plugin-configs/${encodeURIComponent(pkg)}`, vPluginConfig),
+  /** Save typed values or a raw JSON replacement. */
+  savePluginConfig: (pkg: string, body: SavePluginConfigBody) =>
+    request(`/api/v1/config/plugin-configs/${encodeURIComponent(pkg)}`, vSavePluginConfig, {
+      method: "PUT",
+      body,
+    }),
+  /** Re-run extension settings capture + registry merge. */
+  reloadPluginConfigs: () =>
+    request("/api/v1/config/plugin-configs/reload", vReloadPluginConfigs, { method: "POST" }),
 
   // ---------------- mcp ----------------
   getMcpSettings: () => request("/api/v1/mcp/settings", vMcpSettings),

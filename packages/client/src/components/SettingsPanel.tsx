@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Settings2 } from "lucide-react";
 import {
   api,
   ApiError,
@@ -30,6 +30,7 @@ import { createClientId } from "../lib/client-id";
 import { getStoredToken } from "../lib/auth-client";
 import { WebhooksTab } from "./WebhooksTab";
 import { ConfirmDialog } from "./Modal";
+import { PluginConfigModal } from "./PluginConfigModal";
 import { useAuthStore } from "../store/auth-store";
 
 type Tab =
@@ -139,6 +140,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
     }
   }, [initialTab, visibleTabs]);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [openConfigPackage, setOpenConfigPackage] = useState<string | undefined>(undefined);
 
   return (
     <div
@@ -252,7 +254,9 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
 
         <div className="min-w-0 flex-1 overflow-y-auto px-4 py-3 text-sm text-neutral-200">
           {tab === "providers" && <ProvidersTab onError={setError} />}
-          {tab === "extensions" && <ExtensionsTab onError={setError} />}
+          {tab === "extensions" && (
+            <ExtensionsTab onError={setError} onOpenConfig={setOpenConfigPackage} />
+          )}
           {tab === "agent" && <AgentTab onError={setError} />}
           {tab === "mcp" && <McpTab onError={setError} />}
           {tab === "tools" && <ToolsTab onError={setError} />}
@@ -266,6 +270,12 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "backup" && <BackupTab onError={setError} />}
           {tab === "general" && <GeneralTab />}
         </div>
+        {openConfigPackage !== undefined && (
+          <PluginConfigModal
+            pkg={openConfigPackage}
+            onClose={() => setOpenConfigPackage(undefined)}
+          />
+        )}
       </div>
     </div>
   );
@@ -277,8 +287,15 @@ function errorCode(err: unknown): string {
 
 // ---------------- Extensions tab ----------------
 
-function ExtensionsTab({ onError }: { onError: (msg: string | undefined) => void }) {
+function ExtensionsTab({
+  onError,
+  onOpenConfig,
+}: {
+  onError: (msg: string | undefined) => void;
+  onOpenConfig: (pkg: string) => void;
+}) {
   const [listing, setListing] = useState<PackagesListing | undefined>(undefined);
+  const [declaredPackages, setDeclaredPackages] = useState<Set<string>>(new Set());
   const [source, setSource] = useState("");
   const [scope, setScope] = useState<"user" | "project">("user");
   const [installing, setInstalling] = useState(false);
@@ -292,6 +309,14 @@ function ExtensionsTab({ onError }: { onError: (msg: string | undefined) => void
       setListing(await api.getExtensions());
     } catch (err) {
       onError(`Failed to load extensions: ${errorCode(err)}`);
+    }
+    // Declared plugin configs are best-effort — a failure here must
+    // not block the extensions listing from rendering.
+    try {
+      const list = await api.getPluginConfigs();
+      setDeclaredPackages(new Set(list.declarations.map((d) => d.package)));
+    } catch {
+      // silently ignore
     }
   };
 
@@ -405,6 +430,16 @@ function ExtensionsTab({ onError }: { onError: (msg: string | undefined) => void
                 )}
               </div>
               <div className="flex items-center gap-1 text-xs">
+                {declaredPackages.has(p.name ?? p.source) && (
+                  <button
+                    onClick={() => onOpenConfig(p.name ?? p.source)}
+                    title="Plugin config"
+                    aria-label="Open plugin config"
+                    className="rounded border border-neutral-700 px-2 py-0.5 text-neutral-300 hover:bg-neutral-800"
+                  >
+                    <Settings2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
                 <button
                   onClick={() => setRemoveTarget(p)}
                   disabled={removing === p.source}
