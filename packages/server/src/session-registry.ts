@@ -16,6 +16,7 @@ import { createSandboxedToolDefinitions } from "./agent-tool-overrides.js";
 import { config } from "./config.js";
 import { makeDedupe, makeLock } from "./concurrency.js";
 import {
+  createAgentModelRuntime,
   effectivePromptsForProject,
   effectiveSkillsForProject,
   migrateLegacyModelsJsonIfNeeded,
@@ -843,6 +844,7 @@ export async function createSession(
     settingsManager,
     resourceLoader,
     agentDir: config.piConfigDir,
+    modelRuntime: await createAgentModelRuntime(),
     customTools: effectiveCustomTools,
     tools: await buildToolsAllowlist(effectiveCustomTools, projectId, workspacePath),
   });
@@ -1191,6 +1193,7 @@ export async function resumeSession(
       settingsManager,
       resourceLoader,
       agentDir: config.piConfigDir,
+      modelRuntime: await createAgentModelRuntime(),
       customTools: effectiveCustomTools,
       tools: await buildToolsAllowlist(effectiveCustomTools, projectId, workspacePath),
     });
@@ -1873,6 +1876,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     settingsManager,
     resourceLoader,
     agentDir: config.piConfigDir,
+    modelRuntime: await createAgentModelRuntime(),
     customTools: effectiveCustomTools,
     tools: await buildToolsAllowlist(effectiveCustomTools, source.projectId, source.workspacePath),
   });
@@ -1979,6 +1983,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
         settingsManager: restoredSettingsManager,
         resourceLoader: restoredResourceLoader,
         agentDir: config.piConfigDir,
+        modelRuntime: await createAgentModelRuntime(),
         customTools: restoredEffectiveCustomTools,
         tools: await buildToolsAllowlist(
           restoredEffectiveCustomTools,
@@ -2110,6 +2115,7 @@ export async function rebuildAgentSessionForTools(
     settingsManager,
     resourceLoader,
     agentDir: config.piConfigDir,
+    modelRuntime: await createAgentModelRuntime(),
     customTools: effectiveCustomTools,
     tools: await buildToolsAllowlist(effectiveCustomTools, live.projectId, live.workspacePath),
   });

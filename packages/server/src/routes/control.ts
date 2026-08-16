@@ -13,6 +13,7 @@ import {
 } from "../session-registry.js";
 import {
   liveModelRegistry,
+  applyPluginProviders,
   migrateLegacyModelsJsonIfNeeded,
   readSettings,
   syncStoredApiKeyToRuntime,
@@ -568,6 +569,12 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
           // `reloadConfig()` in pi-ai 0.84.)
           await syncStoredApiKeyToRuntime(live.session.modelRuntime, req.body.provider);
           await live.session.modelRuntime.refresh();
+          // Sessions created before the registry capture finished (or before
+          // this provider was installed) won't have the plugin provider on
+          // their runtime; re-apply the captured registrations so the model
+          // switch actually resolves. Idempotent — same-name re-registration
+          // overwrites in the SDK.
+          await applyPluginProviders(live.session.modelRuntime);
           // Wrap in withTimeout so a hung SDK setModel can't hold the
           // settings lock indefinitely. Without this, a single hung
           // setModel blocks every subsequent PUT /config/settings,

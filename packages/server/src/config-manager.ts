@@ -21,7 +21,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { config } from "./config.js";
 import { makeLock } from "./concurrency.js";
-import { getPluginProviderState } from "./providers/registry.js";
+import { getPluginProviderState, refreshPluginProviders } from "./providers/registry.js";
 import { discoverExtensionResources } from "./extensions-discovery.js";
 import {
   getProjectSkillState,
@@ -369,7 +369,58 @@ async function writeAuthJson(data: AuthJson): Promise<void> {
 
 async function liveModelRuntime(): Promise<ModelRuntime> {
   await migrateLegacyModelsJsonIfNeeded();
-  return ModelRuntime.create({ authPath: AUTH_FILE(), modelsPath: MODELS_FILE() });
+  const runtime = await ModelRuntime.create({ authPath: AUTH_FILE(), modelsPath: MODELS_FILE() });
+  await applyPluginProviders(runtime);
+  return runtime;
+}
+
+/**
+ * Register every captured plugin provider (extensions' `registerProvider` /
+ * `registerNativeProvider` calls captured at load time by the plugin provider
+ * registry) into a ModelRuntime so the SDK sees them exactly like built-ins
+ * and models.json entries. Without this, plugin providers were visible in the
+ * Providers tab (the listing reads the registry directly) but the runtime
+ * backing `setModel` and live sessions had no idea they existed, surfacing as
+ * `unknown_provider` (provider check) and `no_api_key` (credential lookup).
+ *
+ * Idempotent: re-registering the same provider name overwrites the previous
+ * registration in the SDK (base/native first, config overlay wins), so it is
+ * safe to call on refresh or on every session creation. If the registry
+ * capture is still in flight at boot, waits for one full capture first.
+ */
+export async function applyPluginProviders(runtime: ModelRuntime): Promise<void> {
+  let state = getPluginProviderState();
+  if (!state.ready) {
+    // Boot-time capture is fire-and-forget; a session created before it
+    // completes would otherwise miss every plugin provider. Trigger one
+    // capture run and register whatever it found.
+    state = await refreshPluginProviders();
+  }
+  for (const entry of state.providers) {
+    try {
+      if (entry.native === true && entry.nativeProvider !== undefined) {
+        runtime.registerNativeProvider(entry.nativeProvider);
+      } else {
+        runtime.registerProvider(entry.name, entry.config);
+      }
+    } catch {
+      // Isolate per-provider failures: a broken provider must not prevent
+      // the others (or the built-ins) from being usable on this runtime.
+    }
+  }
+}
+
+/**
+ * ModelRuntime for a live AgentSession: on-disk auth + models.json, plus every
+ * captured plugin provider registered (see `applyPluginProviders`). Pass this
+ * to `createAgentSession({ modelRuntime })` so sessions can actually call
+ * plugin-provided models instead of failing with `unknown_provider`.
+ */
+export async function createAgentModelRuntime(): Promise<ModelRuntime> {
+  await migrateLegacyModelsJsonIfNeeded();
+  const runtime = await ModelRuntime.create({ authPath: AUTH_FILE(), modelsPath: MODELS_FILE() });
+  await applyPluginProviders(runtime);
+  return runtime;
 }
 
 /**
