@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-08-16
+
 ### Added
 
 - **Plugin configuration compatibility framework.** New `GET /api/v1/config/plugin-configs`,
