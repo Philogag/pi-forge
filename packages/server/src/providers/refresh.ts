@@ -4,7 +4,11 @@ import { dirname, join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type ModelsStoreEntry } from "@earendil-works/pi-ai";
 import { AUTH_FILE, MODELS_FILE, type ProvidersListing } from "../config-manager.js";
-import { getRegisteredPluginProvider } from "./registry.js";
+import {
+  getPluginProviderState,
+  getRegisteredPluginProvider,
+  refreshPluginProviders,
+} from "./registry.js";
 
 /** Shape of one model row in the providers listing (matches config-manager). */
 export type ProviderModels = ProvidersListing["providers"][number]["models"][number];
@@ -97,6 +101,26 @@ export async function writePluginProviderModels(
  * the caller (route layer maps them to 500 `agent_error`); models-store
  * content is left untouched on failure.
  */
+/**
+ * Refresh every captured plugin provider once at boot (network phase
+ * enabled) and persist its catalog to models-store.json. This closes the
+ * first-install gap: `applyPluginProviders` only restores persisted catalogs
+ * (no network), so a provider that was never explicitly refreshed would stay
+ * model-less (and thus unresolvable by `setModel`) forever. Idempotent and
+ * concurrency-safe — subsequent callers await the same in-flight run.
+ */
+let warmupPromise: Promise<void> | undefined;
+export function warmupPluginProviderModels(): Promise<void> {
+  warmupPromise ??= (async () => {
+    let state = getPluginProviderState();
+    if (!state.ready) {
+      state = await refreshPluginProviders();
+    }
+    await Promise.allSettled(state.providers.map((p) => refreshPluginProvider(p.name)));
+  })();
+  return warmupPromise;
+}
+
 export async function refreshPluginProvider(name: string): Promise<ProviderModels[]> {
   const entry = getRegisteredPluginProvider(name);
   if (entry === undefined) {

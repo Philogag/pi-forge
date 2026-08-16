@@ -50,6 +50,7 @@ import { applySandboxStartupChowns } from "./sandbox-startup-permissions.js";
 import { initializeLogoCache, logoCacheDir, LOGO_CACHE_PREFIX } from "./logo-cache.js";
 import { configurePluginConfigRegistry, refreshPluginConfigs } from "./plugin-config/registry.js";
 import { configurePluginProviderRegistry, refreshPluginProviders } from "./providers/registry.js";
+import { warmupPluginProviderModels } from "./providers/refresh.js";
 
 /**
  * Per-route auth metadata. Routes that should skip the auth preHandler set
@@ -484,6 +485,11 @@ export async function buildServer(): Promise<FastifyInstance> {
     agentDir: config.piConfigDir,
   });
   void refreshPluginProviders();
+  // Warm up plugin provider models once at boot (network refresh + models-store
+  // persistence) so first-install providers are resolvable by `setModel` without
+  // a manual refresh. Fire-and-forget; the per-request paths (applyPluginProviders)
+  // restore from the persisted store.
+  void warmupPluginProviderModels();
 
   // ---- static client (production) ----
   // In Docker / `npm run build && node dist/index.js`, Fastify serves the

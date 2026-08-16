@@ -273,6 +273,24 @@ export default function (pi) {
     storeRaw,
   );
   assert("persisted model id", store.testprovider?.models?.[0]?.id === "test-model", storeRaw);
+  // fix(providers): the runtime backing sessions must see plugin providers —
+  // createAgentModelRuntime registers captured providers and restores their
+  // persisted catalog, so POST /sessions/:id/model resolves them instead of
+  // failing with unknown_provider (and session runs with no_api_key).
+  const cmAgent = (await import(
+    resolve(repoRoot, "packages/server/dist/config-manager.js")
+  )) as unknown as {
+    createAgentModelRuntime: () => Promise<{
+      getModels: (providerId?: string) => Promise<{ id: string }[]>;
+    }>;
+  };
+  const agentRuntime = await cmAgent.createAgentModelRuntime();
+  const pluginModels = await agentRuntime.getModels("testprovider");
+  assert(
+    "plugin provider models visible on agent runtime",
+    Array.isArray(pluginModels) && pluginModels.some((m) => m.id === "test-model"),
+    JSON.stringify(pluginModels),
+  );
   // m7c: refreshModels 回调 reject → 错误传播，而非静默空列表。
   let failMsg = "";
   try {

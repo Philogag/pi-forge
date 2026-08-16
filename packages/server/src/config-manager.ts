@@ -396,6 +396,7 @@ export async function applyPluginProviders(runtime: ModelRuntime): Promise<void>
     // capture run and register whatever it found.
     state = await refreshPluginProviders();
   }
+  const registered: string[] = [];
   for (const entry of state.providers) {
     try {
       if (entry.native === true && entry.nativeProvider !== undefined) {
@@ -403,9 +404,28 @@ export async function applyPluginProviders(runtime: ModelRuntime): Promise<void>
       } else {
         runtime.registerProvider(entry.name, entry.config);
       }
+      registered.push(entry.name);
     } catch {
       // Isolate per-provider failures: a broken provider must not prevent
       // the others (or the built-ins) from being usable on this runtime.
+    }
+  }
+  if (registered.length > 0) {
+    // `registerProvider` alone does not populate the SDK's model list —
+    // `ModelRegistry.getAll()` only sees a provider once it has models.
+    // A `refresh` (network phase disabled) restores any persisted catalog
+    // from models-store.json for the just-registered providers, so the
+    // provider+model pair is immediately resolvable (e.g. the
+    // `unknown_provider` check in POST /sessions/:id/model).
+    try {
+      await runtime.refresh({
+        providers: registered,
+        allowNetwork: false,
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      // Refresh is best-effort here; a later explicit refresh or the boot
+      // warm-up (warmupPluginProviderModels) can still populate the store.
     }
   }
 }
