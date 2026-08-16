@@ -45,6 +45,47 @@ edit files under `docs/agent/` only unless the product docs themselves must chan
 
 ---
 
+## 变更工作流（会话启动先读）
+
+本仓库用 OpenSpec + [`superpowers-bridge-cn`](openspec/schemas/superpowers-bridge-cn/)
+schema（简体中文，SDD 工作流；安装与使用见 `.agents/skills/opsx-use-superpower-cn-schema`）。
+
+### 入口分流
+
+| 你看到的触发 | 应该怎么做 |
+|---|---|
+| 用户以 narrative 开「设计讨论 / 头脑风暴」 | 先 verbal brainstorming，不写到 `docs/`；收敛后升级 `/opsx:propose` |
+| 用户调用 `/opsx:new` / `/opsx:ff` / `/opsx:propose` | 走 schema 既定流程（brainstorm → proposal → design/specs → tasks → plan → apply → verify → retrospective） |
+| 用户明确说 bug fix / typo / config 微调 / 文档更新 | 直接 PR，不建 change |
+| 已经在某个 change 中 | `/opsx:continue` 或 `/opsx:apply` / `/opsx:verify` / `/opsx:archive` 推进 |
+
+### 何时不走 opsx（直接 PR）
+
+| 情境 | 直接 PR? |
+|---|---|
+| 新功能 / 新 capability / 架构变更 / breaking change | 走 opsx |
+| Bug fix（不变更合约）/ 测试补写 / linter 规则 / 非破坏性升级 / typo / 文档 / config 微调 | 直接 PR |
+
+原则：流程仪式跟风险成正比。动到对外合约 / schema / 跨系统接口 → opsx；其他 → 直接 PR。
+
+### Verbal brainstorm 升级到 opsx 的 5 条判据（全满足才升级）
+
+1. Scope 锁定（一句话讲清包含/不包含）
+2. 主要设计分歧已收敛（替代方案选过，TBD 有 owner）
+3. 跨系统依赖盘点过（就绪 / mock / 真未知三选一）
+4. 验收条件可陈述（具体 pass 条件）
+5. 对话进入收敛（在 confirm 不在发散）
+
+全满足 → 建议用户「要不要 `/opsx:propose`?」，ack 后落地；不要自动触发。
+
+### Front-door 反模式（别做）
+
+- brainstorming / writing-plans 产物写到 `docs/` 或项目根（一律进 `openspec/changes/<name>/`）
+- TBD 没收敛就升级到 opsx
+- 对 bug fix / typo 也建 change
+
+---
+
 ## Build & Dev Commands
 
 ```bash
