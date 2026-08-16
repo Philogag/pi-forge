@@ -96,6 +96,26 @@ the OpenAPI spec at `/api/docs/json`.
 
 ---
 
+## Providers
+
+`GET /api/v1/config/providers` returns the merged providers listing: built-in
+providers from the model registry plus plugin-registered providers
+(`pi.registerProvider(...)` in loaded extensions — captured by
+`providers/registry.ts`).
+
+| Field | Description |
+|---|---|
+| `ready` | Provider registry capture finished (`false` while the background capture still runs) |
+| `errors` | Per-extension capture diagnostics `[{ path, error }]` — load failures are isolated here and never block the list |
+| `providers[].provider` | Provider name |
+| `providers[].via` | Source package name for plugin-registered providers (absent for built-ins) |
+| `providers[].package` | Same as `via` (redundant; lets the frontend match plugin-config compat declarations) |
+| `providers[].models` | Discovered models (may be empty for plugin providers before a refresh — the card shows a "Refresh models" hint) |
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/v1/config/providers/:provider/refresh` | Trigger model re-discovery for a plugin provider (prefers the extension's `refreshModels` callback; falls back to the SDK's standard discovery) and persist the result to `models-store.json` so later listings read it without a re-refresh. Returns `{ provider, models }`. Errors: 404 `not_found` (unregistered provider name), 400 `not_refreshable` (native-only pi-ai registration with no refresh semantics), 500 `agent_error` (discovery/auth/timeout failure — existing models-store data is left untouched). |
+
 ## SSE Event Types
 
 The following `AgentSessionEvent` types are forwarded to browser clients.

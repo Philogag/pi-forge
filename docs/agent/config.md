@@ -50,6 +50,11 @@ flag. Set it to `false` to skip extension loading entirely at boot (extensions
 still load on-demand when a session needs them); capture failures are recorded
 in the registry's `errors` list and never block startup.
 
+Plugin-provider capture/refresh introduced no new env vars this change: the
+provider registry (`providers/registry.ts`) is independent of
+`PLUGIN_CONFIG_CAPTURE` and refresh timeout is a fixed constant
+(`PROVIDER_REFRESH_TIMEOUT_MS` in `providers/refresh.ts`).
+
 ---
 
 ## Config Files
@@ -63,6 +68,7 @@ Never write directly from routes.
 | File | Purpose |
 |---|---|
 | `PI_CONFIG_DIR/models.json` | Custom providers: vLLM, LiteLLM, Ollama, any OpenAI-compatible endpoint |
+| `PI_CONFIG_DIR/models-store.json` | Refreshed plugin-provider model catalogs (written by `providers/refresh.ts`; restored by the SDK on `ModelRuntime.create`) |
 | `PI_CONFIG_DIR/auth.json` | API keys and OAuth tokens for built-in providers |
 | `PI_CONFIG_DIR/settings.json` | Default model, thinking level, steering/followUp mode |
 | `PI_CONFIG_DIR/settings-extensions.json` | Extension-registered settings (pi `getSetting`/`setSetting`; `{extension: {id: value}}`, string values). Read/written by `plugin-config/store.ts` through the plugin-config registry — values are string-coerced on save to stay pi-compatible |

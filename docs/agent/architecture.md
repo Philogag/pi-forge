@@ -55,6 +55,10 @@ pi-forge/
 │   │   │   ├── compat/                  # Manual in-repo plugin config registrations
 │   │   │   │   ├── index.ts             # COMPAT_DECLARATIONS + validateCompatDeclarations
 │   │   │   │   └── README.md            # How to register a plugin for compat
+│   │   │   ├── providers/               # Plugin provider registry + refresh — see docs/agent/api.md
+│   │   │   │   ├── types.ts             # PluginProviderEntry / ProviderRegistryState / deps
+│   │   │   │   ├── registry.ts          # Background capture of pendingProviderRegistrations
+│   │   │   │   └── refresh.ts           # One-shot ModelRuntime refresh → models-store.json
 │   │   │   ├── attachment-converters.ts # Image/text attachment normalization for prompt route
 │   │   │   ├── skills-export.ts         # Skills archive export
 │   │   │   ├── mcp/                     # MCP client manager + customTools bridge — see docs/mcp.md
@@ -193,6 +197,49 @@ declared JSON files go through `plugin-config/store.ts` (atomic `tmp`+`rename`,
 path confined to `PI_CONFIG_DIR`, string coercion for `settings-extensions.json`)
 and are exposed via the `/api/v1/config/plugin-configs*` routes. `routes/config.ts`
 also refreshes the registry when packages are installed/removed.
+
+### Plugin Providers Flow
+
+Extensions can register model providers at load time via
+`pi.registerProvider(name, config)`; pi-forge captures these into a process-level
+provider registry so the browser Providers tab can list, refresh, and configure
+them.
+
+`providers/registry.ts` mirrors `plugin-config/registry.ts`: `index.ts` calls
+`configurePluginProviderRegistry({ cwd, agentDir })` and a background
+`refreshPluginProviders()` (fire-and-forget) loads enabled extensions via the
+SDK's `discoverAndLoadExtensions` and drains
+`ExtensionRuntimeState.pendingProviderRegistrations` /
+`pendingNativeProviderRegistrations` into an in-memory state
+(`{ ready, providers: [{ name, config, package, native }], errors }`). Package
+names are resolved from the extension path (`node_modules/<pkg>`,
+pnpm virtual store, or `agentDir/extensions/<name>`); per-extension load
+failures are isolated into `errors` and never block other registrations. The
+registry is independent of `PLUGIN_CONFIG_CAPTURE` — that switch only gates
+`pi-extension-settings` capture, not provider registration.
+
+`providers/refresh.ts` implements on-demand model discovery for one plugin
+provider: a throwaway `ModelRuntime.create` (fresh auth/models paths) registers
+the captured config and refreshes — preferring the extension's `refreshModels`
+callback, falling back to the SDK's standard `/v1/models` discovery — then
+persists the catalog to `models-store.json` (atomic write, existing entries
+merged) so later listings read it without a re-refresh. Unregistered names
+throw `PluginProviderNotFoundError` (route maps to 404 `not_found`);
+native-only pi-ai registrations (no refresh semantics) throw
+`PluginProviderNotRefreshableError` (route maps to 400 `not_refreshable`).
+
+`config-manager.ts#liveProvidersListing()` merges the registry into the
+providers listing: plugin providers appear as their own entries annotated
+`via <package>` (plus a redundant `package` field for frontend compat matching),
+providers without store models list with an empty `models` array, and the
+top-level `ready` / `errors` reflect registry state. `routes/config.ts` serves
+the merged listing and exposes `POST /config/providers/:provider/refresh`.
+
+For configuration of those plugin providers' settings.json blocks,
+`extensions-settings-compat/index.ts` declares the `litellm` and
+`pi-provider-omniroute` blocks as compat declarations (file `settings.json`),
+so the same plugin-config form/REST framework (partial update preserving
+unknown keys, atomic write) edits those blocks without touching other keys.
 
 ---
 

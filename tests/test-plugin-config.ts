@@ -22,7 +22,10 @@ import {
   captureExtensionSettings,
   normalizeRegistration,
 } from "../packages/server/src/plugin-config/capture.js";
-import { validateCompatDeclarations } from "../packages/server/src/extensions-settings-compat/index.js";
+import {
+  validateCompatDeclarations,
+  COMPAT_DECLARATIONS,
+} from "../packages/server/src/extensions-settings-compat/index.js";
 import {
   configurePluginConfigRegistry,
   getConfigDeclaration,
@@ -412,6 +415,34 @@ async function mainCompat(): Promise<void> {
     },
   ];
   assert("compat rejects invalid path syntax", validateCompatDeclarations(badSyntax).length === 1);
+
+  // 归档插件 provider 的 compat 声明（litellm / omniroute → settings.json 块，v0.1.0 官方机制）
+  const declErrors = validateCompatDeclarations(COMPAT_DECLARATIONS);
+  assert("compat decls valid", declErrors.length === 0, declErrors.join("; "));
+  const litellm = COMPAT_DECLARATIONS.find((d) => d.package === "pi-provider-litellm");
+  const omni = COMPAT_DECLARATIONS.find((d) => d.package === "@philogag/pi-provider-omniroute");
+  assert("litellm declared", litellm !== undefined && litellm.file === "settings.json");
+  assert("omniroute declared", omni !== undefined && omni.file === "settings.json");
+  assert(
+    "omniroute nested paths into settings.json block",
+    omni?.fields.some((f) => f.path.startsWith("pi-provider-omniroute.")) === true,
+  );
+  const searchEnum = (
+    omni?.fields.find((f) => f.path === "pi-provider-omniroute.search.provider") as
+      | { enum?: { value: string }[] }
+      | undefined
+  )?.enum;
+  const fetchEnum = (
+    omni?.fields.find((f) => f.path === "pi-provider-omniroute.fetch.provider") as
+      | { enum?: { value: string }[] }
+      | undefined
+  )?.enum;
+  assert(
+    "omniroute enum fields match plugin v0.1.0 provider sets",
+    searchEnum?.length === 14 &&
+      fetchEnum?.length === 4 &&
+      fetchEnum?.some((e) => e.value === "tinyfish") === true,
+  );
   if (failures > 0) process.exit(1);
   console.log("plugin-config compat: ALL PASS");
 }

@@ -22,6 +22,11 @@ import {
 import { config } from "../config.js";
 import { buildExportTar, importConfigFromBuffer, MAX_IMPORT_BYTES } from "../config-export.js";
 import {
+  PluginProviderNotFoundError,
+  PluginProviderNotRefreshableError,
+  refreshPluginProvider,
+} from "../providers/refresh.js";
+import {
   buildSkillsExportTar,
   SkillsDirectoryEmptyError,
   importSkillsFromFiles,
@@ -179,43 +184,60 @@ const authSummarySchema = {
   },
 } as const;
 
+const providerModelSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "id",
+    "name",
+    "contextWindow",
+    "maxTokens",
+    "reasoning",
+    "input",
+    "hasAuth",
+    "supportedThinkingLevels",
+  ],
+  properties: {
+    id: { type: "string" },
+    name: { type: "string" },
+    contextWindow: { type: "integer" },
+    maxTokens: { type: "integer" },
+    reasoning: { type: "boolean" },
+    input: { type: "array", items: { type: "string" } },
+    hasAuth: { type: "boolean" },
+    supportedThinkingLevels: { type: "array", items: { type: "string" } },
+  },
+} as const;
+
 const providersListingSchema = {
   type: "object",
-  required: ["providers"],
+  additionalProperties: false,
+  required: ["ready", "errors", "providers"],
   properties: {
+    ready: { type: "boolean" },
+    errors: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "error"],
+        properties: {
+          path: { type: "string" },
+          error: { type: "string" },
+        },
+      },
+    },
     providers: {
       type: "array",
       items: {
         type: "object",
+        additionalProperties: false,
         required: ["provider", "models"],
         properties: {
           provider: { type: "string" },
-          models: {
-            type: "array",
-            items: {
-              type: "object",
-              required: [
-                "id",
-                "name",
-                "contextWindow",
-                "maxTokens",
-                "reasoning",
-                "input",
-                "hasAuth",
-                "supportedThinkingLevels",
-              ],
-              properties: {
-                id: { type: "string" },
-                name: { type: "string" },
-                contextWindow: { type: "integer" },
-                maxTokens: { type: "integer" },
-                reasoning: { type: "boolean" },
-                input: { type: "array", items: { type: "string" } },
-                hasAuth: { type: "boolean" },
-                supportedThinkingLevels: { type: "array", items: { type: "string" } },
-              },
-            },
-          },
+          via: { type: "string" },
+          package: { type: "string" },
+          models: { type: "array", items: providerModelSchema },
         },
       },
     },
@@ -637,6 +659,69 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.code(404).send({ error: "auth_provider_not_found" });
         }
         return internalError(reply, err);
+      }
+    },
+  );
+
+  // ---------------------- plugin provider refresh ----------------------
+  // Trigger model re-discovery for one plugin-registered provider. The
+  // refresh prefers the extension's `refreshModels` callback and falls back
+  // to SDK standard `/v1/models` discovery; results are persisted to
+  // models-store.json (M1) so later listings read them without a re-refresh.
+  // 404 for unregistered names; 400 when the provider is a native
+  // registration with no refresh semantics; other failures map to 500
+  // `agent_error`.
+  fastify.post<{ Params: { provider: string } }>(
+    "/config/providers/:provider/refresh",
+    {
+      schema: {
+        summary: "Refresh models for a plugin-provided provider",
+        description:
+          "Trigger model re-discovery for one plugin-registered provider " +
+          "(prefers the extension's `refreshModels` callback; falls back to " +
+          "SDK standard `/v1/models` discovery). Result is persisted to " +
+          "models-store.json so later listings see it without a re-refresh. " +
+          "404 `not_found` for unregistered names; 400 `not_refreshable` for " +
+          "native registrations; other failures surface as 500 `agent_error`.",
+        tags: ["config"],
+        params: {
+          type: "object",
+          required: ["provider"],
+          properties: { provider: { type: "string", minLength: 1 } },
+        },
+        response: {
+          200: {
+            type: "object",
+            additionalProperties: false,
+            required: ["provider", "models"],
+            properties: {
+              provider: { type: "string" },
+              models: { type: "array", items: providerModelSchema },
+            },
+          },
+          400: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const models = await refreshPluginProvider(req.params.provider);
+        return { provider: req.params.provider, models };
+      } catch (err) {
+        if (err instanceof PluginProviderNotFoundError) {
+          return reply.code(404).send({ error: "not_found", message: err.message });
+        }
+        if (err instanceof PluginProviderNotRefreshableError) {
+          return reply.code(400).send({ error: "not_refreshable", message: err.message });
+        }
+        // 其他失败：500 `agent_error`（与 /config/reload 等路由一致）。
+        reply.log.error({ err }, "plugin provider refresh failed");
+        return reply.code(500).send({
+          error: "agent_error",
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     },
   );

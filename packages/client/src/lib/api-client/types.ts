@@ -592,8 +592,19 @@ export interface ProviderModelEntry {
   supportedThinkingLevels: ModelThinkingLevel[];
 }
 
+export interface ProviderListingGroup {
+  provider: string;
+  /** Extension package that registered this provider (absent for builtins). */
+  via?: string;
+  /** Extension package name as captured from `extensionPath` (see providers/registry). */
+  package?: string;
+  models: ProviderModelEntry[];
+}
+
 export interface ProvidersListing {
-  providers: { provider: string; models: ProviderModelEntry[] }[];
+  ready: boolean;
+  errors: { path: string; error: string }[];
+  providers: ProviderListingGroup[];
 }
 
 export interface AuthSummary {

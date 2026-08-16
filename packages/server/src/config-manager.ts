@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { config } from "./config.js";
 import { makeLock } from "./concurrency.js";
+import { getPluginProviderState } from "./providers/registry.js";
 import { discoverExtensionResources } from "./extensions-discovery.js";
 import {
   getProjectSkillState,
@@ -37,8 +38,8 @@ import {
   type PromptOverrideState,
 } from "./prompt-overrides.js";
 
-const MODELS_FILE = (): string => join(config.piConfigDir, "models.json");
-const AUTH_FILE = (): string => join(config.piConfigDir, "auth.json");
+export const MODELS_FILE = (): string => join(config.piConfigDir, "models.json");
+export const AUTH_FILE = (): string => join(config.piConfigDir, "auth.json");
 const SETTINGS_FILE = (): string => join(config.piConfigDir, "settings.json");
 
 /**
@@ -124,8 +125,24 @@ export interface AuthSummary {
 }
 
 export interface ProvidersListing {
+  /**
+   * Plugin provider registry state: `true` once the registry has been
+   * refreshed at least once (extension load completed, even with isolated
+   * per-extension errors). Backward-compatible addition — old clients
+   * ignore it.
+   */
+  ready: boolean;
+  /** Extension-load errors surfaced by the plugin provider registry. */
+  errors: { path: string; error: string }[];
   providers: {
     provider: string;
+    /**
+     * Plugin source package name (plugin-provided providers only).
+     * `package` is the same value — redundant, kept so the client can
+     * match compat declarations off a single field name.
+     */
+    via?: string;
+    package?: string;
     models: {
       id: string;
       name: string;
@@ -492,17 +509,50 @@ export async function updateSettings(patch: Record<string, unknown>): Promise<Se
 export async function liveProvidersListing(): Promise<ProvidersListing> {
   await migrateLegacyModelsJsonIfNeeded();
   const registry = await liveModelRegistry();
+  const provState = getPluginProviderState();
+  // M1 列表侧：把注册表 provider 注册到一次性 runtime 上，使 SDK 的
+  // store-restore（refresh phase-1，对已 compose 的 provider 生效）能把
+  // models-store.json 里持久化的插件模型恢复进列表——否则持久化只在
+  // refresh 端点生效，列表永远读不到。native 注册通过对象重载
+  // registerProvider(provider) 走 registerNativeProvider，其 refreshModels
+  // 的 phase-1 restore 同样从 models-store 恢复。注册失败（无
+  // nativeProvider 引用、坏配置等）用 try/catch 隔离：不阻断列表，标注仍
+  // 由下方注册表合并路径处理，该 provider 仅不参与模型恢复。
+  const registered: string[] = [];
+  for (const p of provState.providers) {
+    try {
+      if (p.native && p.nativeProvider !== undefined) {
+        registry.registerProvider(p.nativeProvider);
+      } else {
+        registry.registerProvider(p.name, p.config);
+      }
+      registered.push(p.name);
+    } catch {
+      // native（无 nativeProvider 引用）/ 坏配置：仅标注，不参与模型恢复。
+    }
+  }
+  if (registered.length > 0) {
+    // registerProvider 内部的 fire-and-forget refresh 与下面的 getAll()
+    // 存在竞态；显式 await 一次 allowNetwork:false 的 phase-1 恢复保证
+    // store 里的模型确定可见（不触网）。
+    await registry.refresh({ providers: registered, allowNetwork: false });
+  }
   const all: Model<Api>[] = registry.getAll();
   // When HIDE_BUILTIN_PROVIDERS is on, restrict to providers whose
   // name appears as a key in models.json. Built-ins (anthropic,
   // openai, etc. the SDK ships with) drop out, leaving only the
-  // operator-added custom providers.
+  // operator-added custom providers. Plugin-registered providers are
+  // exempt — their names are not models.json keys and they must stay
+  // visible regardless of the filter.
   const customOnly = config.hideBuiltinProviders
     ? new Set(Object.keys((await readModelsJson()).providers))
     : undefined;
+  const pluginNames = new Set(provState.providers.map((p) => p.name));
   const grouped = new Map<string, ProvidersListing["providers"][number]>();
   for (const m of all) {
-    if (customOnly !== undefined && !customOnly.has(m.provider)) continue;
+    if (customOnly !== undefined && !pluginNames.has(m.provider) && !customOnly.has(m.provider)) {
+      continue;
+    }
     let entry = grouped.get(m.provider);
     if (entry === undefined) {
       entry = { provider: m.provider, models: [] };
@@ -519,7 +569,24 @@ export async function liveProvidersListing(): Promise<ProvidersListing> {
       supportedThinkingLevels: getSupportedThinkingLevels(m),
     });
   }
-  return { providers: Array.from(grouped.values()) };
+  // 合并插件注册表：标注来源（via/package）；models-store 无模型的插件
+  // provider 以空 models 数组列出（spec「无模型插件 provider 仍列出」）。
+  const named = new Map<string, ProvidersListing["providers"][number]>();
+  for (const [key, e] of grouped) named.set(key, e);
+  for (const p of provState.providers) {
+    let entry = named.get(p.name);
+    if (entry === undefined) {
+      entry = { provider: p.name, models: [] };
+      named.set(p.name, entry);
+    }
+    entry.via = p.package;
+    entry.package = p.package;
+  }
+  return {
+    ready: provState.ready,
+    errors: provState.errors,
+    providers: Array.from(named.values()),
+  };
 }
 
 // ---------------------------------------------------------------------------

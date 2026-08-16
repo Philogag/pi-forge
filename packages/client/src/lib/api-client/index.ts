@@ -40,6 +40,7 @@ import {
   type ToolListing,
   type ToolOverridesResponse,
   type ProvidersListing,
+  type ProviderModelEntry,
   type AuthSummary,
   type FileTreeNode,
   type FileReadResponse,
@@ -641,7 +642,26 @@ function vProvidersListing(value: unknown, status: number): ProvidersListing {
   if (!isObject(value) || !Array.isArray(value.providers)) {
     fail(status, "expected { providers: [...] }");
   }
-  return { providers: value.providers as ProvidersListing["providers"] };
+  const listing = value as {
+    ready?: unknown;
+    errors?: unknown;
+    providers: ProvidersListing["providers"];
+  };
+  return {
+    ready: listing.ready === true,
+    errors: Array.isArray(listing.errors) ? (listing.errors as ProvidersListing["errors"]) : [],
+    providers: listing.providers,
+  };
+}
+
+function vProviderRefresh(
+  value: unknown,
+  status: number,
+): { provider: string; models: ProviderModelEntry[] } {
+  if (!isObject(value) || !Array.isArray(value.models)) {
+    fail(status, "expected { provider, models[] }");
+  }
+  return value as unknown as { provider: string; models: ProviderModelEntry[] };
 }
 
 function vMcpServers(value: unknown, status: number): McpServersResponse {
@@ -2193,6 +2213,10 @@ export const api = {
   setModelsJson: (data: { providers: Record<string, unknown> }) =>
     request("/api/v1/config/models", vModelsJson, { method: "PUT", body: data }),
   getProviders: () => request("/api/v1/config/providers", vProvidersListing),
+  refreshPluginProvider: (provider: string) =>
+    request(`/api/v1/config/providers/${encodeURIComponent(provider)}/refresh`, vProviderRefresh, {
+      method: "POST",
+    }),
   getSettings: () => request("/api/v1/config/settings", vSettings),
   updateSettings: (patch: Record<string, unknown>) =>
     request("/api/v1/config/settings", vSettings, { method: "PUT", body: patch }),

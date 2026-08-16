@@ -12,6 +12,7 @@ import {
   type InstalledPackage,
   type PromptSummary,
   type SkillDiagnostic,
+  type PluginConfigListResponse,
   SERVER_THEME_COLOR_KEYS,
   type SandboxSettingsResponse,
   type ServerThemeColorKey,
@@ -253,7 +254,9 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
         )}
 
         <div className="min-w-0 flex-1 overflow-y-auto px-4 py-3 text-sm text-neutral-200">
-          {tab === "providers" && <ProvidersTab onError={setError} />}
+          {tab === "providers" && (
+            <ProvidersTab onError={setError} onOpenConfig={setOpenConfigPackage} />
+          )}
           {tab === "extensions" && (
             <ExtensionsTab onError={setError} onOpenConfig={setOpenConfigPackage} />
           )}
@@ -523,9 +526,21 @@ function ExtensionsTab({
 
 // ---------------- Providers tab ----------------
 
-function ProvidersTab({ onError }: { onError: (msg: string | undefined) => void }) {
+function ProvidersTab({
+  onError,
+  onOpenConfig,
+}: {
+  onError: (msg: string | undefined) => void;
+  onOpenConfig: (pkg: string) => void;
+}) {
   const [providers, setProviders] = useState<ProvidersListing | undefined>(undefined);
   const [auth, setAuth] = useState<AuthSummary | undefined>(undefined);
+  const [pluginConfigs, setPluginConfigs] = useState<PluginConfigListResponse | undefined>(
+    undefined,
+  );
+  // Provider whose plugin model registry is being re-discovered right
+  // now. Shared across cards so only one refresh runs at a time.
+  const [refreshing, setRefreshing] = useState<string | undefined>(undefined);
   const [editingProvider, setEditingProvider] = useState<string | undefined>(undefined);
   const [keyDraft, setKeyDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -533,9 +548,14 @@ function ProvidersTab({ onError }: { onError: (msg: string | undefined) => void 
   const refresh = async (): Promise<void> => {
     onError(undefined);
     try {
-      const [p, a] = await Promise.all([api.getProviders(), api.getAuthSummary()]);
+      const [p, a, pc] = await Promise.all([
+        api.getProviders(),
+        api.getAuthSummary(),
+        api.getPluginConfigs(),
+      ]);
       setProviders(p);
       setAuth(a);
+      setPluginConfigs(pc);
     } catch (err) {
       onError(`Failed to load providers: ${errorCode(err)}`);
     }
@@ -574,6 +594,24 @@ function ProvidersTab({ onError }: { onError: (msg: string | undefined) => void 
     }
   };
 
+  /** Re-run a plugin provider's model discovery, then re-pull the
+   *  listing so the freshly discovered models show up in place. */
+  const doRefresh = async (provider: string): Promise<void> => {
+    setRefreshing(provider);
+    try {
+      await api.refreshPluginProvider(provider);
+      await refresh();
+    } catch (err) {
+      onError(`Refresh failed: ${errorCode(err)}`);
+    } finally {
+      setRefreshing(undefined);
+    }
+  };
+
+  /** Open the plugin-config modal for a provider's backing package —
+   *  the same shared modal the Extensions tab gear uses. */
+  const openPluginConfigFor = (pkg: string): void => onOpenConfig(pkg);
+
   if (providers === undefined) {
     return <p className="text-xs italic text-neutral-500">Loading providers…</p>;
   }
@@ -584,6 +622,11 @@ function ProvidersTab({ onError }: { onError: (msg: string | undefined) => void 
         Built-in providers and anything in <code className="font-mono">models.json</code>. Stored
         API keys are presence-only — actual values are never sent to the browser.
       </p>
+      {providers.ready === false && (
+        <p className="text-[11px] text-amber-400/90">
+          Provider registry still loading — reload or retry.
+        </p>
+      )}
       {providers.providers.length === 0 && (
         <p className="text-xs italic text-neutral-500">No providers configured.</p>
       )}
@@ -605,11 +648,34 @@ function ProvidersTab({ onError }: { onError: (msg: string | undefined) => void 
                 >
                   {configured ? "key set" : "no key"}
                 </span>
+                {p.via !== undefined && (
+                  <span className="text-[10px] text-neutral-500">via {p.via}</span>
+                )}
                 {presence?.source !== undefined && (
                   <span className="text-[10px] text-neutral-500">via {presence.source}</span>
                 )}
               </div>
               <div className="flex items-center gap-1 text-xs">
+                {p.via !== undefined && (
+                  <button
+                    onClick={() => void doRefresh(p.provider)}
+                    disabled={refreshing !== undefined}
+                    className="rounded border border-neutral-700 px-2 py-0.5 text-neutral-300 hover:border-neutral-500 disabled:opacity-50"
+                  >
+                    {refreshing === p.provider ? "Refreshing…" : "Refresh models"}
+                  </button>
+                )}
+                {p.via !== undefined &&
+                  pluginConfigs?.declarations.some((d) => d.package === p.via) && (
+                    <button
+                      onClick={() => openPluginConfigFor(p.via!)}
+                      aria-label="Open plugin config"
+                      title="Plugin config"
+                      className="rounded border border-neutral-700 px-2 py-0.5 text-neutral-300 hover:bg-neutral-800"
+                    >
+                      <Settings2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 {!editing && (
                   <button
                     onClick={() => {
@@ -686,6 +752,11 @@ function ProvidersTab({ onError }: { onError: (msg: string | undefined) => void 
                 ))}
               </ul>
             </details>
+            {p.models.length === 0 && p.via !== undefined && (
+              <p className="mt-1 text-[11px] text-neutral-500 italic">
+                No models discovered — click Refresh models.
+              </p>
+            )}
           </div>
         );
       })}
