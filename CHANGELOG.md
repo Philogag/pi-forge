@@ -15,6 +15,22 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Plugin providers are now usable in sessions.** Selecting a model from a
+  plugin-provided provider (e.g. `@philogag/pi-provider-omniroute`) failed
+  with `set model failed: unknown_provider` (and session runs with
+  `no_api_key`) because the provider registrations captured from extensions
+  were only visible to the Providers tab listing — the `ModelRuntime` backing
+  live sessions and the `POST /sessions/:id/model` check had no knowledge of
+  them. The captured registrations (native and config alike) are now applied
+  to every runtime: sessions are created with `createAgentModelRuntime()`
+  (on-disk auth + models.json plus plugin providers registered), the
+  `setModel` endpoint re-applies them after its refresh, and a boot-time
+  warm-up (`warmupPluginProviderModels`) performs one network refresh per
+  plugin provider and persists its catalog to `models-store.json`, so
+  first-install providers resolve without a manual refresh.
+
 ## [1.5.0] — 2026-08-16
 
 ### Added
