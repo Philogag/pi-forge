@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-08-17
+
 ### Fixed
 
 - **Plugin providers are now usable in sessions.** Selecting a model from a
