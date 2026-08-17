@@ -421,8 +421,15 @@ async function mainCompat(): Promise<void> {
   assert("compat decls valid", declErrors.length === 0, declErrors.join("; "));
   const litellm = COMPAT_DECLARATIONS.find((d) => d.package === "pi-provider-litellm");
   const omni = COMPAT_DECLARATIONS.find((d) => d.package === "@philogag/pi-provider-omniroute");
+  const qq = COMPAT_DECLARATIONS.find((d) => d.package === "pi-qq-integration");
   assert("litellm declared", litellm !== undefined && litellm.file === "settings.json");
   assert("omniroute declared", omni !== undefined && omni.file === "settings.json");
+  assert("qq-integration declared", qq !== undefined && qq.file === "qq-integration-config.json");
+  assert(
+    "qq secret + settings fields declared",
+    qq?.fields.some((f) => f.path === "appSecret" && f.secret === true) === true &&
+      qq?.fields.some((f) => f.path.startsWith("settings.")) === true,
+  );
   assert(
     "omniroute nested paths into settings.json block",
     omni?.fields.some((f) => f.path.startsWith("pi-provider-omniroute.")) === true,

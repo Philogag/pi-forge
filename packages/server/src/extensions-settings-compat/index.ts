@@ -3,6 +3,7 @@ import { isAllowedConfigFile } from "../plugin-config/paths.js";
 import { COMPAT_DECLARATIONS as BILLION_CONTEXT_PI_DECLARATIONS } from "./billion-context-pi.js";
 import { COMPAT_DECLARATIONS as LITELLM_DECLARATIONS } from "./pi-provider-litellm.js";
 import { COMPAT_DECLARATIONS as OMNIROUTE_DECLARATIONS } from "./pi-provider-omniroute.js";
+import { COMPAT_DECLARATIONS as QQ_INTEGRATION_DECLARATIONS } from "./pi-qq-integration.js";
 
 // 每个需要兼容的插件对应一个文件（extensions-settings-compat/<package>.ts），
 // 在此聚合。新增兼容插件：新建文件 + 在本数组追加。
@@ -10,6 +11,7 @@ export const COMPAT_DECLARATIONS: ConfigDeclaration[] = [
   ...BILLION_CONTEXT_PI_DECLARATIONS,
   ...LITELLM_DECLARATIONS,
   ...OMNIROUTE_DECLARATIONS,
+  ...QQ_INTEGRATION_DECLARATIONS,
 ];
 
 const SEGMENT_RE = /^[^[]+(?:\[\d+\])?$/;
